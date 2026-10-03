@@ -13,7 +13,7 @@ from .record import Action, ActionKind, DecisionRecord, InputError
 SUBMISSION_REASON = "submission guard rejected the output"
 NO_OFFSET_REASON = "no offset in the allowed grid lowers the gap"
 MERIT_ONLY_SUGGESTION = "review data drift, then consider a merit-only policy"
-JURY_REASONS = ("near_cutoff", "disagreement")
+JURY_REASONS = ("near_cutoff", "low_confidence", "disagreement")
 
 logger = get_logger("harness")
 

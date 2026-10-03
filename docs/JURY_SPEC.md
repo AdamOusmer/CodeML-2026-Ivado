@@ -39,7 +39,7 @@ No juror reads `region_administrative`, `code_postal_3` or `distance_domicile_ca
 | Trigger | Rule | Default |
 |---|---|---|
 | Near cutoff | abs(decision rank − (k − 0.5)) ≤ `band` × n (decision rank = rank of main probability + offset) | `band = 0.025` (≈ 100 of 4,000 each side) |
-| ~~Low confidence~~ | removed (see below) | - |
+| Low confidence | abs(ranking score − boundary) < `conf`, boundary = midpoint of the k-th and (k+1)-th ranking score (after offset) | `conf = 0.05` |
 | Strong disagreement | max over jurors of abs(juror percentile − main percentile) > `disagree` | `disagree = 0.30` |
 
 Low-confidence trigger (probability in 0.5 ± 0.15) removed with `JurySettings.conf`. Evidence (10 splits): disabling it
@@ -137,7 +137,7 @@ self-agreement.
   (remote grants 594 at every offset, EO gap constant, forced alert → BLOCK), so the corrector would be dead. Reverted; acceptance now asserts `ADJUST_OFFSET` and offset reach >= 10.
 
 - Swap strength averages |juror percentile − cutoff| over dissenting jurors only (OVERTURN voters), so a confirming juror no longer dilutes it. Quorum stays 1.0.
-- Low-confidence trigger removed (`JurySettings.conf` gone, `JURY_REASONS = (near_cutoff, disagreement)`); evidence in §3.
+- Low-confidence trigger re-centred on the decision boundary (`JurySettings.conf = 0.05`, `JURY_REASONS = (near_cutoff, low_confidence, disagreement)`); see the last section.
 - `ADJUST_OFFSET.params` gains `offset_moved` (proposal changes from the offset alone, before the jury); `moved` stays the final diff.
 - Declared config stays the two-juror unanimous jury (user decision, WP9): `DECLARED_CONFIG = Config("validator jury")`. Merit-only was proposed
   by the jury session and declined by the user; its evidence is kept below for the record.
@@ -147,7 +147,7 @@ self-agreement.
 
 ## 10. Open questions
 Resolved:
-- Low-confidence window: trigger removed (§3).
+- Low-confidence window: re-centred on the decision boundary (last section).
 - Strength with `quorum` < 1: fixed, averages over dissenting jurors only (§9).
 - Offset scale: kept on probability. Percentile scale reaches −58..+56 remote grants at ±0.10, too coarse for the 0.005 grid; probability scale −8..+11 remote grants,
   monotone, 23 distinct decision sets over 41 points (acceptance `jury_offset_monotone`: 586 / 594 / 606 at −0.10 / 0 / +0.10).
@@ -155,3 +155,12 @@ Resolved:
 Open:
 - Corrector reach at the 0.05 alert threshold is untested on a real drifted batch (forced drift study, remote R −1.5, did not reach ALERT).
 - Merit self-agreement: the merit juror is also the merit reference, so merit-reference scores are partly self-agreement.
+
+## Low-confidence trigger, re-centred (user decision, integration)
+
+Restored as `JurySettings.conf = 0.05`: an applicant is reviewed when abs(ranking score − boundary) < conf, where
+boundary = midpoint between the last granted and the first refused ranking score (after any offset), i.e. centred on
+the decision actually being made, not on probability 0.5. Measured: boundary probability 0.684 on the candidates; only
+35 applicants lie within ±0.05, all inside the near-cutoff band, so decisions are unchanged on current data (10 splits:
+widths 0.01–0.08 identical to disabled). ±0.20 adds 5 reviews; ±0.40 reviews 1,729 applicants (avoid: equivalent to a
+very wide band). The trigger guards future, less confident main models.

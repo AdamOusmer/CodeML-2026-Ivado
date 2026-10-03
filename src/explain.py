@@ -14,11 +14,16 @@ def explain(pipeline, df, outcome, scores, offset, top=3):
     jury_outcome[np.asarray(outcome.overturned, dtype=bool)] = "overturn_unpaired"
     jury_outcome[outcome.overturned_out] = "overturned_out"
     jury_outcome[outcome.overturned_in] = "overturned_in"
+    ranking = np.argsort(-np.asarray(scores), kind="stable")
+    final_rank = np.empty(len(df), dtype=int)
+    final_rank[ranking] = np.arange(1, len(df) + 1)
     result = pd.DataFrame(
         {
             "id_candidat": df["id_candidat"].to_numpy(),
             "decision": np.asarray(outcome.decisions),
+            "proposed_decision": np.asarray(outcome.proposed),
             "score": np.asarray(scores),
+            "final_rank": final_rank,
             "merit_vote": percentile(df["cote_r_equivalent"]),
             "model_vote": percentile(pipeline.model_probability(df)),
             "offset": offset * is_remote(df),

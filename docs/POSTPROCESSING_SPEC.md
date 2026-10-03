@@ -22,14 +22,14 @@ always runs last, after correction.
 ## 2. Bound enforcement (closes HARNESS_SPEC I3 divergence)
 
 - `OFFSET_BOUND = 0.10` in `src/policy/models.py`; `FairPipeline.score`, `predict` and `decide` raise `ValueError`
-  when `abs(offset) > OFFSET_BOUND`. `OFFSET_GRID` in the harness derives from it.
+  when the offset is not finite or `abs(offset) > OFFSET_BOUND`. `OFFSET_GRID` in the harness derives from it.
 
 ## 3. Submission guard — `src/harness/submission.py`
 
 `submission_issues(batch, ids, decisions, k) -> list[str]`, empty when valid:
 - `ids` equal `batch["id_candidat"]` in order; unique; length n.
-- decisions are integers in {0, 1}; sum == k; rate within `BUDGET_BOUNDS`.
-- no NaN anywhere in the output frame.
+- decisions are 1-D integer (not bool) in {0, 1}; sum == k; rate within `BUDGET_BOUNDS`.
+- missing values (ids or decisions) are reported as issues, never raised.
 Non-empty → `BLOCK` with params `{"checks": ["submission"], "issues": [...]}`, exit 3, nothing published.
 
 ## 4. Node graph — `src/harness/postprocessing.py`
@@ -39,16 +39,16 @@ Declared with `src.common.graph` (harness may import common). Seeds: `pipeline`,
 
 | Node | Inputs | Output |
 |---|---|---|
-| `scores` | pipeline, batch | main score, main probability, juror scores |
-| `outcome` | pipeline, batch, scores | `JuryOutcome` at offset 0 |
-| `verdict` | history, batch, outcome | first `Verdict` |
+| `outcome` | pipeline, batch | `pipeline.decide(batch)`: `JuryOutcome` at offset 0 |
+| `verdict` | history, batch, outcome, eo_gap_alert | first `Verdict` |
 | `offset` | pipeline, history, batch, share, verdict | 0.0 unless verdict is correctable ALERT, then `fit_offset` |
-| `final_outcome` | pipeline, batch, offset, outcome | `outcome` when offset is 0, else jury re-run at offset |
-| `final_verdict` | history, batch, final_outcome, offset, verdict | `verdict` when offset is 0, else re-audit |
-| `submission` | batch, final_outcome, share | issues list |
+| `final_outcome` | pipeline, batch, offset, outcome | `outcome` when offset is 0, else `pipeline.decide(batch, offset)` |
+| `final_verdict` | history, batch, final_outcome, offset, verdict, eo_gap_alert | `verdict` when offset is 0, else re-audit |
+| `submission` | batch, final_outcome, share; after `final_verdict` | issues list |
 | `status` | final_verdict, submission | `published` or `blocked` |
 
 Nodes return their input unchanged when their condition is false (pass-through), so the graph is static.
+One decision function (`pipeline.decide`) serves both paths, so `fit_offset` optimises the published path.
 `POSTPROCESSING_NODES`, `postprocessing_graph(nodes)`; `controller.decide` runs it and builds the record.
 
 ## 5. Record and explanations
@@ -72,6 +72,9 @@ Nodes return their input unchanged when their condition is false (pass-through),
 - Default batch: published, 1,598 grants, offset 0, jury swaps recorded, submission issues empty.
 - Forced correctable ALERT: offset applied, jury re-run on the shifted proposal, `offset_moved_ids` and
   `jury_moved_ids` both recorded, grant count still 1,598.
-- Crafted invalid output (duplicate id, wrong order, value 2, count k + 1): each → BLOCK, exit 3, no `predictions.csv`.
+- Value 2 and k + 1 grants injected end-to-end (replaced `final_outcome` node): each → BLOCK, one BLOCK action, no
+  `predictions.csv`. Duplicate id and wrong order are proven on `submission_issues` directly (in the harness ids come
+  from the batch; duplicate batch ids are rejected earlier by `check_ids` / frame validation, exit 1). Exit 3 for a
+  submission BLOCK through the CLI is not exercised (CLI cannot inject).
 - Offset beyond the bound raises; the harness never requests one.
 - Replay identical (I4); shuffled region/postal/distance with offset 0 gives identical decisions (I2).

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from src.common.logging import get_logger
 from src.explain import explain
-from src.monitoring import EO_GAP_ALERT, Verdict, run_checks, verdict
-from src.policy import DECLARED_CONFIG, Config, FairPipeline, budget_share, eo_gap, is_remote, reference_labels
+from src.monitoring import EO_GAP_ALERT
+from src.policy import DECLARED_CONFIG, NO_PENALTY_WARNING, Config, FairPipeline, budget_share
 
+from .postprocessing import POSTPROCESSING_NODES, alerting, postprocessing_graph
 from .record import Action, ActionKind, DecisionRecord, InputError
 
-OFFSET_GRID = np.linspace(-0.10, 0.10, 41).round(3)
+SUBMISSION_REASON = "submission guard rejected the output"
 NO_OFFSET_REASON = "no offset in the allowed grid lowers the gap"
 MERIT_ONLY_SUGGESTION = "review data drift, then consider a merit-only policy"
 JURY_REASONS = ("near_cutoff", "disagreement")
@@ -27,28 +27,6 @@ def jury_counts(outcome) -> dict:
     }
 
 
-def audit(history, batch, decisions, eo_gap_alert) -> Verdict:
-    result = verdict(run_checks(history, batch, decisions, eo_gap_alert=eo_gap_alert))
-    logger.info("Audit: %s", result.status)
-    return result
-
-
-def fit_offset(pipeline: FairPipeline, history, batch, share) -> float:
-    references = reference_labels(history, batch, share)
-    remote = is_remote(batch)
-
-    def worst_gap(offset):
-        decisions = pipeline.predict(batch, offset)
-        gaps = [eo_gap(decisions, references[name], remote) for name in ("corrected", "merit")]
-        return np.inf if np.isnan(gaps).any() else round(max(gaps), 3)
-
-    return float(min(OFFSET_GRID, key=lambda offset: (worst_gap(offset), abs(offset), -offset)))
-
-
-def alerting(result: Verdict) -> list[str]:
-    return [check.name for check in result.checks if check.status == "ALERT"]
-
-
 def check_ids(batch: pd.DataFrame) -> None:
     ids = batch["id_candidat"]
     if ids.isna().any():
@@ -57,8 +35,20 @@ def check_ids(batch: pd.DataFrame) -> None:
         raise InputError(f"batch has {int(ids.duplicated().sum()):,} duplicated id_candidat values")
 
 
+def block_action(first_verdict, final_verdict, offset, issues) -> Action:
+    checks = alerting(final_verdict)
+    if not checks:
+        return Action(ActionKind.BLOCK, SUBMISSION_REASON, {"checks": ["submission"], "issues": issues})
+    reason = NO_OFFSET_REASON if first_verdict.correctable and offset == 0 else "alert remains after allowed corrections"
+    params = {"checks": checks, "suggestion": MERIT_ONLY_SUGGESTION}
+    if issues:
+        params = {"checks": [*checks, "submission"], "issues": issues, "suggestion": MERIT_ONLY_SUGGESTION}
+    return Action(ActionKind.BLOCK, reason, params)
+
+
 def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, str],
-           config: Config = DECLARED_CONFIG, eo_gap_alert: float = EO_GAP_ALERT) -> DecisionRecord:
+           config: Config = DECLARED_CONFIG, eo_gap_alert: float = EO_GAP_ALERT,
+           nodes=POSTPROCESSING_NODES) -> DecisionRecord:
     check_ids(batch)
     try:
         share = budget_share(history)
@@ -66,37 +56,29 @@ def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, s
         raise InputError(str(error)) from error
     actions = [Action(ActionKind.SELECT_CONFIG, "declared configuration", {"config": config.name})]
     pipeline = FairPipeline(config, share).fit(history)
-    offset = 0.0
-    outcome = pipeline.decide(batch)
-    decisions = outcome.decisions
-    verdicts = [audit(history, batch, decisions, eo_gap_alert)]
-    moved_ids: list[str] = []
+    seeds = {"pipeline": pipeline, "history": history, "batch": batch, "share": share, "eo_gap_alert": eo_gap_alert}
+    artifacts = postprocessing_graph(nodes).run(seeds, workers=1)
+    outcome, final_outcome = artifacts["outcome"], artifacts["final_outcome"]
+    offset, issues = artifacts["offset"], artifacts["submission"]
+    first_verdict, final_verdict = artifacts["verdict"], artifacts["final_verdict"]
+    ids = batch["id_candidat"]
+    verdicts = [first_verdict] if offset == 0 else [first_verdict, final_verdict]
+    offset_moved_ids = ids[final_outcome.proposed != outcome.proposed].tolist()
+    jury_moved_ids = ids[final_outcome.decisions != final_outcome.proposed].tolist()
 
-    block_reason = "alert remains after allowed corrections"
-    if verdicts[-1].correctable:
-        offset = fit_offset(pipeline, history, batch, share)
-        if offset == 0.0:
-            block_reason = NO_OFFSET_REASON
-        else:
-            adjusted = pipeline.decide(batch, offset)
-            moved_ids = batch["id_candidat"][adjusted.decisions != decisions].tolist()
-            actions.append(Action(ActionKind.ADJUST_OFFSET, "opportunity gap alert",
-                                  {"offset": offset, "moved": len(moved_ids),
-                                   "offset_moved": int((adjusted.proposed != outcome.proposed).sum()),
-                                   "alerts": alerting(verdicts[-1])}))
-            outcome = adjusted
-            decisions = adjusted.decisions
-            verdicts.append(audit(history, batch, decisions, eo_gap_alert))
-
-    status = "blocked" if verdicts[-1].status == "ALERT" else "published"
-    if status == "blocked":
-        actions.append(Action(ActionKind.BLOCK, block_reason,
-                              {"checks": alerting(verdicts[-1]), "suggestion": MERIT_ONLY_SUGGESTION}))
+    if offset != 0:
+        actions.append(Action(ActionKind.ADJUST_OFFSET, "opportunity gap alert",
+                              {"offset": offset, "moved": int((final_outcome.decisions != outcome.decisions).sum()),
+                               "offset_moved": len(offset_moved_ids), "alerts": alerting(first_verdict)}))
+    if artifacts["status"] == "blocked":
+        actions.append(block_action(first_verdict, final_verdict, offset, issues))
 
     scores = pipeline.score(batch, offset)
-    region_rates = pd.Series(decisions).groupby(batch["region_administrative"].to_numpy()).mean().round(4).to_dict()
-    jury = jury_counts(outcome)
+    region_rates = (pd.Series(final_outcome.decisions).groupby(batch["region_administrative"].to_numpy())
+                    .mean().round(4).to_dict())
+    jury = jury_counts(final_outcome)
     logger.info("Jury: %s", jury)
-    return DecisionRecord(config, share, status, batch["id_candidat"], decisions, scores, offset, verdicts, actions,
-                          moved_ids, explain(pipeline, batch, outcome, scores, offset), region_rates, input_hashes,
-                          jury)
+    return DecisionRecord(config, share, artifacts["status"], ids, final_outcome.decisions, final_outcome.proposed,
+                          scores, offset, verdicts, actions, issues, offset_moved_ids, jury_moved_ids,
+                          explain(pipeline, batch, final_outcome, scores, offset), region_rates, input_hashes, jury,
+                          [NO_PENALTY_WARNING] if pipeline.label_correction_.penalty >= 0 else [])

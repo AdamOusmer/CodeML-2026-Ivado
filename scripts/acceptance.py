@@ -169,16 +169,36 @@ def check_duplicate_id(ctx) -> str:
 
 
 def check_forced_correctable_alert(ctx) -> str:
+    from src.policy import is_remote
+
     record = ctx["baseline_decide"](eo_gap_alert=0.015)
     kinds = action_kinds(record)
     n = len(record.decisions)
     grants = int(np.sum(record.decisions))
     offset = float(record.offset)
     assert "ADJUST_OFFSET" in kinds, f"no ADJUST_OFFSET: {kinds}"
-    assert 0 < abs(offset) <= 0.10 + 1e-12, f"offset {offset}"
-    assert len(record.moved_ids) > 0, "moved_ids empty"
-    assert grants == round(record.share * n), f"grants {grants} != round(share*n)"
-    return f"ADJUST_OFFSET offset={offset:+.3f} moved={len(record.moved_ids)} status={record.status} grants={grants}"
+    assert offset != 0 and abs(offset) <= 0.10 + 1e-12, f"offset {offset}"
+    assert len(record.verdicts) == 2, f"{len(record.verdicts)} verdicts"
+    assert grants == round(record.share * n) == 1598, f"grants {grants}"
+    assert record.offset_moved_ids and record.jury_moved_ids, "offset_moved_ids or jury_moved_ids empty"
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    ids = batch["id_candidat"].to_numpy()
+    remote = is_remote(batch).astype(bool)
+    flat = pipeline.decide(batch).proposed
+    shifted = pipeline.decide(batch, offset)
+    assert np.array_equal(shifted.decisions, record.decisions), "decisions differ from independent decide(offset)"
+    entered = (flat == 0) & (shifted.proposed == 1)
+    left = (flat == 1) & (shifted.proposed == 0)
+    assert entered.sum() == left.sum() > 0, f"proposal entered {entered.sum()} != left {left.sum()}"
+    sign_group = remote if offset > 0 else ~remote
+    assert sign_group[entered].all(), f"offset {offset:+.3f} admitted entrants from the wrong group"
+    assert set(record.offset_moved_ids) == set(ids[entered | left].tolist()), "offset_moved_ids != flipped proposals"
+    out, into = record.jury["overturned_out"], record.jury["overturned_in"]
+    assert out == into > 0, f"jury swaps out {out} != in {into}"
+    assert len(record.jury_moved_ids) == out + into, "jury_moved_ids count != swaps"
+    assert set(record.jury_moved_ids) == set(ids[shifted.decisions != shifted.proposed].tolist()), "jury_moved_ids != independent jury"
+    return (f"ADJUST_OFFSET offset={offset:+.3f} offset_moved={len(record.offset_moved_ids)} "
+            f"jury_moved={len(record.jury_moved_ids)} status={record.status} grants={grants}")
 
 
 def block_action(summary: dict) -> dict:
@@ -248,23 +268,25 @@ def check_alert_after_correction(ctx) -> str:
     out = make_sentinel_dir(ctx["tmp"], "alert_after_correction")
     record = decide_and_write(ctx["history"], batch, out, eo_gap_alert=-1.0)
     kinds = action_kinds(record)
-    assert "ADJUST_OFFSET" in kinds and "BLOCK" in kinds, f"actions {kinds}"
-    assert kinds.index("ADJUST_OFFSET") < kinds.index("BLOCK"), f"order {kinds}"
-    assert kinds[-1] == "BLOCK", f"actions {kinds}"
+    assert kinds[-1] == "BLOCK" and "ADJUST_OFFSET" in kinds, f"actions {kinds}"
+    assert kinds.index("ADJUST_OFFSET") < kinds.index("BLOCK"), f"BLOCK before ADJUST_OFFSET: {kinds}"
+    assert record.offset != 0 and len(record.verdicts) == 2, f"offset {record.offset} verdicts {len(record.verdicts)}"
+    block = record.actions[-1]
+    assert block.reason == "alert remains after allowed corrections", f"reason {block.reason!r}"
     assert record.status == "blocked", f"status {record.status}"
     assert (out / "predictions.csv").read_bytes() == SENTINEL, "sentinel predictions.csv changed (I5)"
-    return f"actions={kinds} sentinel intact"
+    return f"actions={kinds} offset={record.offset:+.3f} reason={block.reason!r} sentinel intact"
 
 
 def check_zero_offset_block(ctx) -> str:
-    import src.harness.controller as controller
+    import src.harness.postprocessing as postprocessing
 
-    original = controller.fit_offset
-    controller.fit_offset = lambda *args, **kwargs: 0.0
+    original = postprocessing.fit_offset
+    postprocessing.fit_offset = lambda *args, **kwargs: 0.0
     try:
         record = ctx["baseline_decide"](eo_gap_alert=0.015)
     finally:
-        controller.fit_offset = original
+        postprocessing.fit_offset = original
     kinds = action_kinds(record)
     assert kinds == ["SELECT_CONFIG", "BLOCK"], f"actions {kinds}"
     assert record.actions[-1].reason == NO_OFFSET_REASON, f"reason {record.actions[-1].reason!r}"
@@ -596,7 +618,7 @@ def check_jury_record(ctx) -> str:
 
 
 def check_jury_offset_monotone(ctx) -> str:
-    from src.harness.controller import OFFSET_GRID
+    from src.harness import OFFSET_GRID
     from src.policy import is_remote
 
     pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
@@ -838,6 +860,307 @@ def check_extra_fields(ctx) -> str:
     return f"exit=1 nothing written stderr={stderr_lines[-1][:80]!r}" if stderr_lines else "exit=1 nothing written"
 
 
+def check_label_correction(ctx) -> str:
+    from src.policy import CommitteeModel, allocate, budget_share, correct_labels, is_remote
+
+    history = ctx["history"]
+    share = budget_share(history)
+    result = correct_labels(history, share)
+    ctx["correction"] = result
+    expected = allocate(CommitteeModel().fit(history, history["decision_octroi"]).corrected_logit(history, 1.0), share)
+    assert np.array_equal(result.labels, expected), "corrected labels differ from allocate(corrected_logit)"
+    assert result.k == 3994 == int(result.labels.sum()), f"k {result.k} labels {int(result.labels.sum())}"
+    assert len(result.flipped_in) == len(result.flipped_out) == 651, f"flips {len(result.flipped_in)}/{len(result.flipped_out)}"
+    remote = is_remote(history)
+    flipped_remote = int(remote[result.flipped_in].sum())
+    flipped_centre = int((remote[result.flipped_out] == 0).sum())
+    assert flipped_remote == 432, f"remote flipped in {flipped_remote}"
+    assert flipped_centre == 577, f"centre flipped out {flipped_centre}"
+    centre_rate = float(result.labels[remote == 0].mean())
+    remote_rate = float(result.labels[remote == 1].mean())
+    assert abs(centre_rate - 0.424) < 0.002, f"centre rate {centre_rate:.4f}"
+    assert abs(remote_rate - 0.362) < 0.002, f"remote rate {remote_rate:.4f}"
+    return f"k=3994 flips=651/651 remote_in=432 centre_out=577 rates centre={centre_rate:.3f} remote={remote_rate:.3f}"
+
+
+def check_correction_report(ctx) -> str:
+    from src.policy import budget_share, correction_report, report_warnings
+
+    share = budget_share(ctx["history"])
+    first = correction_report(ctx["history"], share)
+    low, high = first.penalty_ci
+    assert abs(first.penalty + 1.90) < 0.02, f"penalty {first.penalty:.3f}"
+    assert abs(low + 2.07) < 0.02 and abs(high + 1.73) < 0.02, f"ci [{low:.3f}, {high:.3f}]"
+    assert high < 0, "ci includes 0"
+    assert abs(first.slope_test_statistic - 4.38) < 0.05, f"slope stat {first.slope_test_statistic:.3f}"
+    assert first.slope_test_df == 8, f"df {first.slope_test_df}"
+    assert abs(first.slope_test_p - 0.82) < 0.01, f"p {first.slope_test_p:.3f}"
+    assert (first.flipped_in, first.flipped_out) == (651, 651), "report flips"
+    assert (first.flipped_in_remote, first.flipped_out_centre) == (432, 577), "report flip groups"
+    assert correction_report(ctx["history"], share) == first, "same-seed replay differs"
+    warnings = report_warnings(first)
+    assert warnings == [], f"warnings {warnings}"
+    ctx["report"] = first
+    return (f"penalty={first.penalty:.3f} ci=[{low:.3f}, {high:.3f}] slope={first.slope_test_statistic:.2f} "
+            f"df={first.slope_test_df} p={first.slope_test_p:.3f} replay equal warnings=[]")
+
+
+def check_decide_skips_bootstrap(ctx) -> str:
+    import src.policy.label_correction as module
+    from src.harness import decide
+
+    def boom(*args, **kwargs):
+        raise AssertionError("bootstrap called on decision path")
+
+    saved = module.correction_report, module._penalty_interval
+    module.correction_report = module._penalty_interval = boom
+    try:
+        record = decide(ctx["history"], ctx["batch"], input_hashes())
+    finally:
+        module.correction_report, module._penalty_interval = saved
+    assert record.status == "published", f"status {record.status}"
+    assert record.label_correction is None, "harness decide computed label_correction"
+    return "harness decide ran with correction_report and bootstrap patched to raise"
+
+
+def check_tiny_history_report(ctx) -> str:
+    import dataclasses
+
+    from src.policy import correction_report, is_remote, report_warnings
+    PENALTY_NOT_DISTINGUISHABLE_WARNING = "penalty not distinguishable from zero"
+
+    history = ctx["history"]
+    remote = is_remote(history).astype(bool)
+    granted = history["decision_octroi"].to_numpy() == 1
+    picks = []
+    for is_remote_group, is_granted, count in ((True, True, 2), (False, True, 2), (True, False, 3), (False, False, 3)):
+        picks.extend(np.flatnonzero((remote == is_remote_group) & (granted == is_granted))[:count].tolist())
+    tiny = history.iloc[picks].reset_index(drop=True)
+    assert len(tiny) == 10 and int(tiny["decision_octroi"].sum()) == 4, "tiny history shape"
+    assert 0 < int(is_remote(tiny).sum()) < len(tiny), "tiny history lacks a region"
+    result = correction_report(tiny, 0.4)
+    assert result.penalty_ci is None or len(result.penalty_ci) == 2, f"ci {result.penalty_ci}"
+    spans_zero = result.penalty_ci is None or result.penalty_ci[0] <= 0 <= result.penalty_ci[1]
+    assert (PENALTY_NOT_DISTINGUISHABLE_WARNING in report_warnings(result)) == spans_zero, f"warnings {report_warnings(result)} ci {result.penalty_ci}"
+    unbootstrapped = correction_report(tiny, 0.4, n_boot=0)
+    assert unbootstrapped.penalty_ci is None, f"ci {unbootstrapped.penalty_ci}"
+    assert PENALTY_NOT_DISTINGUISHABLE_WARNING in report_warnings(unbootstrapped), "no warning for ci None"
+    assert json.loads(json.dumps(dataclasses.asdict(unbootstrapped)))["penalty_ci"] is None, "penalty_ci not null in json"
+    return f"correction_report on 10 rows / 4 grants ok ci={result.penalty_ci}; n_boot=0 -> ci None, warning, json null"
+
+
+def check_reference_consistency(ctx) -> str:
+    from src.policy import budget_share, correct_labels, is_remote, reference_labels
+    from src.policy import CommitteeModel
+
+    history = ctx["history"]
+    share = budget_share(history)
+    swapped = history.copy()
+    remote = is_remote(history).astype(bool)
+    swapped["region_administrative"] = np.where(remote, "Montreal", "Cote-Nord")
+    penalties = {}
+    for name, frame in (("current", history), ("swapped", swapped)):
+        penalties[name] = float(CommitteeModel().fit(frame, frame["decision_octroi"].to_numpy()).remote_penalty_)
+        reference = reference_labels(frame, frame, share)["corrected"]
+        labels = correct_labels(frame, share).labels
+        assert np.array_equal(reference, labels), f"{name}: reference differs from training labels on {int((reference != labels).sum())} rows"
+    assert penalties["current"] < 0, f"current penalty {penalties['current']:.3f}"
+    assert penalties["swapped"] > 0, f"swapped penalty {penalties['swapped']:.3f} not positive"
+    return f"reference == training labels; penalty current={penalties['current']:+.3f} swapped={penalties['swapped']:+.3f}"
+
+
+def check_fit_uses_history_rate(ctx) -> str:
+    from sklearn.model_selection import train_test_split
+
+    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+
+    history = ctx["history"]
+    share = budget_share(history)
+    for seed in range(50):
+        train, _ = train_test_split(history, train_size=0.7, stratify=history["region_administrative"], random_state=seed)
+        grants = int(train["decision_octroi"].sum())
+        if grants != round(share * len(train)):
+            break
+    else:
+        raise AssertionError("no split with differing grant count")
+    assert grants != round(share * len(train)), "split not discriminating"
+    pipeline = FairPipeline(DECLARED_CONFIG, share).fit(train)
+    correction = pipeline.label_correction_
+    assert correction.k == grants, f"k {correction.k} != train grants {grants} (share-based {round(share * len(train))})"
+    assert int(correction.labels.sum()) == grants, f"labels {int(correction.labels.sum())} != train grants {grants}"
+    return f"seed={seed} n_train={len(train)} train_grants={grants} share_based={round(share * len(train))} k={correction.k}"
+
+
+def check_cli_record(ctx) -> str:
+    out = ctx["tmp"] / "cli_record"
+    result = run_decide_cli(HISTORY_PATH, BATCH_PATH, out)
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
+    ctx["cli_record_dir"] = out
+    summary = json.loads((out / "decision_record.json").read_text())
+    correction = summary["label_correction"]
+    assert correction is not None, "label_correction missing"
+    low, high = correction["penalty_ci"]
+    assert abs(correction["penalty"] + 1.90) < 0.02, f"penalty {correction['penalty']:.3f}"
+    assert abs(low + 2.07) < 0.02 and abs(high + 1.73) < 0.02, f"ci [{low:.3f}, {high:.3f}]"
+    assert abs(correction["slope_test_statistic"] - 4.38) < 0.05, f"slope {correction['slope_test_statistic']:.3f}"
+    assert correction["slope_test_df"] == 8, f"df {correction['slope_test_df']}"
+    assert abs(correction["slope_test_p"] - 0.82) < 0.01, f"p {correction['slope_test_p']:.3f}"
+    assert (correction["flipped_in"], correction["flipped_out"]) == (651, 651), "flips"
+    assert summary["warnings"] == [], f"warnings {summary['warnings']}"
+    assert summary["status"] == "published" and (out / "predictions.csv").exists(), "not published"
+    return f"CLI record label_correction penalty={correction['penalty']:.3f} warnings=[] exit=0"
+
+
+def check_cli_replay(ctx) -> str:
+    first = ctx["cli_record_dir"]
+    second = ctx["tmp"] / "cli_record_b"
+    result = run_decide_cli(HISTORY_PATH, BATCH_PATH, second)
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
+    left, right = [(directory / "decision_record.json").read_bytes() for directory in (first, second)]
+    assert left == right, "decision_record.json differs between two CLI runs"
+    assert b"penalty_ci" in left and b"slope_test_p" in left, "record lacks bootstrap CI or slope test"
+    return f"decision_record.json byte-identical sha256={sha256_bytes(left)[:8]} bytes={len(left)}"
+
+
+def check_postprocessing_default(ctx) -> str:
+    record = ctx["baseline"]
+    assert record.status == "published", f"status {record.status}"
+    assert int(record.decisions.sum()) == 1598, f"grants {int(record.decisions.sum())}"
+    assert record.offset == 0, f"offset {record.offset}"
+    assert record.submission_issues == [], f"issues {record.submission_issues}"
+    assert record.offset_moved_ids == [], f"offset_moved_ids {len(record.offset_moved_ids)}"
+    assert record.jury["triggered"] > 0 and "reasons" in record.jury, f"jury {record.jury}"
+    assert record.jury_moved_ids, "jury_moved_ids empty"
+    assert np.array_equal(record.proposed, record.decisions) is False, "jury changed nothing"
+    return f"published grants=1598 offset=0 issues=[] jury_moved={len(record.jury_moved_ids)} triggered={record.jury['triggered']}"
+
+
+def injected_nodes(corrupt):
+    from dataclasses import replace
+
+    from src.common.graph import Node
+    from src.harness import POSTPROCESSING_NODES
+
+    def final_outcome(*args):
+        outcome = next(node for node in POSTPROCESSING_NODES if node.name == "final_outcome").fn(*args)
+        return replace(outcome, decisions=corrupt(outcome.decisions.copy()))
+
+    inputs = next(node for node in POSTPROCESSING_NODES if node.name == "final_outcome").inputs
+    return tuple(Node("final_outcome", final_outcome, inputs) if node.name == "final_outcome" else node
+                 for node in POSTPROCESSING_NODES)
+
+
+def check_submission_guard(ctx) -> str:
+    from src.harness import submission_issues
+
+    batch = ctx["batch"]
+    ids = batch["id_candidat"].to_numpy()
+    k = 1598
+    valid = np.zeros(len(batch), dtype=int)
+    valid[:k] = 1
+    assert submission_issues(batch, ids, valid, k) == [], "valid output flagged"
+    duplicate = ids.copy()
+    duplicate[1] = duplicate[0]
+    reordered = ids.copy()
+    reordered[[0, 1]] = reordered[[1, 0]]
+    direct = {
+        "duplicate_id": submission_issues(batch, duplicate, valid, k),
+        "wrong_order": submission_issues(batch, reordered, valid, k),
+        "value_2": submission_issues(batch, ids, np.where(np.arange(len(batch)) == 0, 2, valid), k),
+        "count_k_plus_1": submission_issues(batch, ids, np.where(np.arange(len(batch)) == k, 1, valid), k),
+    }
+    empty = [name for name, issues in direct.items() if not issues]
+    assert not empty, f"not flagged: {empty}"
+
+    def value_two(decisions):
+        decisions[np.flatnonzero(decisions == 1)[0]] = 2
+        return decisions
+
+    def extra_grant(decisions):
+        decisions[np.flatnonzero(decisions == 0)[0]] = 1
+        return decisions
+
+    notes = []
+    for name, corrupt in (("value_2", value_two), ("count_k_plus_1", extra_grant)):
+        out = make_sentinel_dir(ctx["tmp"], f"guard_{name}")
+        record = decide_and_write(ctx["history"], batch, out, nodes=injected_nodes(corrupt))
+        blocks = [action for action in record.actions if getattr(action.kind, "value", action.kind) == "BLOCK"]
+        assert record.status == "blocked", f"{name}: status {record.status}"
+        assert len(blocks) == 1, f"{name}: {len(blocks)} BLOCK actions"
+        assert "submission" in blocks[0].params["checks"], f"{name}: checks {blocks[0].params['checks']}"
+        assert record.submission_issues, f"{name}: no submission_issues"
+        assert (out / "predictions.csv").read_bytes() == SENTINEL, f"{name}: sentinel predictions.csv changed"
+        notes.append(f"{name}=blocked")
+    return "direct issues flagged for " + ",".join(direct) + "; injected final_outcome " + " ".join(notes) + "; sentinel intact (CLI not injected)"
+
+
+def check_submission_probes(ctx) -> str:
+    from src.harness import submission_issues
+
+    batch = ctx["batch"]
+    n, k = len(batch), 1598
+    ids = batch["id_candidat"].to_numpy()
+    valid = np.zeros(n, dtype=int)
+    valid[:k] = 1
+    missing_ids = pd.array(np.arange(n), dtype="Int64")
+    missing_ids[0] = pd.NA
+    duplicated = batch.copy()
+    duplicated.loc[duplicated.index[1], "id_candidat"] = duplicated.loc[duplicated.index[0], "id_candidat"]
+    cases = {
+        "decisions_2d": (batch, ids, np.zeros((n, 2), dtype=int)),
+        "decisions_bool": (batch, ids, valid.astype(bool)),
+        "decisions_0d": (batch, ids, np.array(1)),
+        "ids_pd_na": (batch, missing_ids, valid),
+        "ids_2d": (batch, np.stack([ids, ids], axis=1), valid),
+    }
+    for name, (frame, case_ids, decisions) in cases.items():
+        try:
+            issues = submission_issues(frame, case_ids, decisions, k)
+        except Exception as error:
+            raise AssertionError(f"{name} raised {type(error).__name__}: {error}")
+        assert issues, f"{name} not flagged"
+    isolated = submission_issues(duplicated, duplicated["id_candidat"].to_numpy(), valid, k)
+    assert isolated == ["ids are not unique"], f"uniqueness rule not isolated: {isolated}"
+    return "2-D, bool, 0-d decisions and pd.NA, 2-D ids flagged without raising; duplicate ids give only 'not unique'"
+
+
+def check_offset_bound(ctx) -> str:
+    from src.harness import OFFSET_GRID
+    from src.policy import OFFSET_BOUND
+
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    for name, call in (("score", pipeline.score), ("predict", pipeline.predict), ("decide", pipeline.decide)):
+        for offset in (0.11, -0.11):
+            try:
+                call(batch, offset)
+            except ValueError:
+                continue
+            raise AssertionError(f"{name}({offset}) accepted")
+        for offset in (float("nan"), float("inf"), float("-inf")):
+            try:
+                call(batch, offset)
+            except ValueError:
+                continue
+            raise AssertionError(f"{name}({offset}) accepted")
+        call(batch, 0.10)
+        call(batch, -0.10)
+    assert OFFSET_BOUND == 0.10, f"OFFSET_BOUND {OFFSET_BOUND}"
+    assert len(OFFSET_GRID) == 41, f"grid points {len(OFFSET_GRID)}"
+    assert float(np.max(np.abs(OFFSET_GRID))) <= OFFSET_BOUND + 1e-12, "grid beyond bound"
+    assert np.allclose(OFFSET_GRID, np.linspace(-0.10, 0.10, 41)), "grid values changed"
+    return "score/predict/decide reject +-0.11, NaN, +-inf, accept +-0.10; grid 41 points within bound"
+
+
+def check_explain_fields(ctx) -> str:
+    table = ctx["baseline"].explanations
+    assert {"proposed_decision", "final_rank"} <= set(table.columns), f"columns {list(table.columns)}"
+    n = len(table)
+    assert sorted(table["final_rank"]) == list(range(1, n + 1)), "final_rank not a permutation of 1..n"
+    assert set(table["proposed_decision"].unique()) <= {0, 1}, "proposed_decision not binary"
+    assert int(table["proposed_decision"].sum()) == int(ctx["baseline"].proposed.sum()), "proposed_decision mismatch"
+    return f"proposed_decision and final_rank present; final_rank permutation of 1..{n}"
+
+
 def run_check(name: str, function, *args) -> None:
     started = time.time()
     try:
@@ -914,6 +1237,19 @@ def main() -> int:
     run_check("jury_determinism", check_jury_determinism, ctx)
     run_check("jury_record", check_jury_record, ctx)
     run_check("jury_offset_monotone", check_jury_offset_monotone, ctx)
+    run_check("label_correction", check_label_correction, ctx)
+    run_check("correction_report", check_correction_report, ctx)
+    run_check("decide_skips_bootstrap", check_decide_skips_bootstrap, ctx)
+    run_check("tiny_history_report", check_tiny_history_report, ctx)
+    run_check("reference_consistency", check_reference_consistency, ctx)
+    run_check("fit_uses_history_rate", check_fit_uses_history_rate, ctx)
+    run_check("cli_record", check_cli_record, ctx)
+    run_check("cli_replay", check_cli_replay, ctx)
+    run_check("postprocessing_default", check_postprocessing_default, ctx)
+    run_check("submission_guard", check_submission_guard, ctx)
+    run_check("submission_probes", check_submission_probes, ctx)
+    run_check("offset_bound", check_offset_bound, ctx)
+    run_check("explain_fields", check_explain_fields, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} passed in {time.time() - started:.0f}s; failed: {failures}", flush=True)
     shutil.rmtree(tmp, ignore_errors=True)

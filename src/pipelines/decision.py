@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from src.adapters import read_inputs, save_figure, write_decision, write_table
 from src.common.graph import Graph, Node
 from src.common.logging import get_logger
 from src.evaluation import pareto_report
-from src.harness import decide
+from src.harness import DecisionRecord, decide
+from src.policy import correction_report, report_warnings
 from src.preprocessing import validate_frames
 
 PIPELINE_WORKERS = 2
@@ -37,6 +39,13 @@ def share_of(record):
     return record.share
 
 
+def attach_correction(record: DecisionRecord, report) -> DecisionRecord:
+    added = [warning for warning in report_warnings(report) if warning not in record.warnings]
+    for warning in added:
+        logger.warning("%s", warning)
+    return replace(record, label_correction=asdict(report), warnings=[*record.warnings, *added])
+
+
 def write_pareto(report, out_dir: Path) -> list[Path]:
     table_path = Path(out_dir) / "resultats_pareto.csv"
     figure_path = Path(out_dir) / "pareto_front.png"
@@ -52,12 +61,14 @@ DECISION_NODES = (
     Node("frame_report", validate_frames, ("history", "batch")),
     Node("frame_warnings", log_warnings, ("frame_report",)),
     Node("hashes", hashes_of, ("inputs",)),
-    Node("record", decide, ("history", "batch", "hashes"), after=("frame_report",)),
+    Node("decision", decide, ("history", "batch", "hashes"), after=("frame_report",)),
+    Node("share", share_of, ("decision",)),
+    Node("correction_report", correction_report, ("history", "share"), after=("frame_report",)),
+    Node("record", attach_correction, ("decision", "correction_report")),
     Node("written", write_decision, ("record", "out_dir")),
 )
 
 PARETO_NODES = (
-    Node("share", share_of, ("record",)),
     Node("pareto", pareto_report, ("history", "share", "splits", "pareto_workers")),
     Node("pareto_written", write_pareto, ("pareto", "out_dir")),
 )

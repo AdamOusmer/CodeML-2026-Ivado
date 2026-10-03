@@ -46,7 +46,8 @@ CLI handles `InputError`, `DataValidationError`, `FileNotFoundError`, `KeyError`
 | `src/policy/schema.py` | `PROGRAMMES`, `TRANSFORMS`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features` (no sklearn) |
 | `src/policy/core.py` | `production_features`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap` (no longer owns features schema) |
 | `src/policy/jury.py` | `JurySettings`, `JuryOutcome`, `validate` (numpy only; pure) |
-| `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
+| `src/policy/label_correction.py` | `CommitteeModel`, `LabelCorrection`, `correct_labels`, `effective_removal`, `CorrectionReport`, `correction_report`, `report_warnings`, `NO_PENALTY_WARNING` |
+| `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `OFFSET_BOUND`, `FairPipeline`, `reference_labels` (`fit` corrects labels with the history's own grant rate; `self.share` drives batch allocation) |
 | `src/evaluation/core.py` | `Candidate`, `evaluate`, `evaluate_split`, `run`, `summarize`, `scaled_utility` (package-internal) |
 | `src/evaluation/candidates.py` | `default_candidates()`, candidate decide-fns, `pareto_report` (returns table + figure; no file I/O) |
 | `src/evaluation/pareto.py` | `pareto_mask`, `plot` (returns a matplotlib `Figure`; pyplot-free, thread-safe; no file I/O) |
@@ -54,7 +55,9 @@ CLI handles `InputError`, `DataValidationError`, `FileNotFoundError`, `KeyError`
 | `src/monitoring/checks.py` | thresholds, `Check`, checks as nodes, `CHECK_NODES`, `monitoring_graph`, `MONITORING`, `run_checks`, `Verdict`, `verdict`, `overall_status` |
 | `src/explain.py` | `explain` |
 | `src/harness/record.py` | `InputError`, `ActionKind`, `Action`, `DecisionRecord` (data + `summary()`; no file I/O) |
-| `src/harness/controller.py` | `decide`, `audit`, `fit_offset`, `OFFSET_GRID` |
+| `src/harness/controller.py` | `decide` |
+| `src/harness/postprocessing.py` | `POSTPROCESSING_NODES`, `postprocessing_graph`, `audit`, `fit_offset`, `OFFSET_GRID` |
+| `src/harness/submission.py` | `submission_issues` |
 | `src/preprocessing/rules.py` | shared rules table + `DataValidationError` |
 | `src/preprocessing/frames.py` | frame check nodes, `validate_frames`, `FrameReport` |
 | `src/preprocessing/validation.py` | `check-data` validation (own process pool) |
@@ -72,11 +75,11 @@ Each package exposes its public API in `__init__.py` with `__all__`. Code outsid
 
 | Package | Public API (`__all__`) |
 |---|---|
-| `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `PROGRAMMES`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels`, `JurySettings`, `JuryOutcome`, `validate` |
+| `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `PROGRAMMES`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `OFFSET_BOUND`, `CommitteeModel`, `LabelCorrection`, `correct_labels`, `CorrectionReport`, `correction_report`, `report_warnings`, `NO_PENALTY_WARNING`, `FairPipeline`, `reference_labels`, `JurySettings`, `JuryOutcome`, `validate` |
 | `src.monitoring` | `EO_GAP_ALERT`, `Check`, `Verdict`, `run_checks`, `verdict`, `overall_status`, `MONITORING`, `CHECK_NODES`, `monitoring_graph` |
 | `src.explain` | `explain` |
 | `src.evaluation` | `SEARCH_SPACE`, `tune`, `ParetoReport`, `pareto_report` |
-| `src.harness` | `decide`, `InputError`, `DecisionRecord`, `Action`, `ActionKind` |
+| `src.harness` | `decide`, `InputError`, `DecisionRecord`, `Action`, `ActionKind`, `submission_issues`, `POSTPROCESSING_NODES`, `OFFSET_GRID` |
 | `src.preprocessing` | `validate_datasets`, `DatasetReport`, `DataValidationError`, `validate_frames`, `FrameReport`, `Findings`, `FRAME_CHECKS`, `FRAME_CHECK_NODES`, `frame_graph` |
 | `src.pipelines` | `DECISION_NODES`, `PARETO_NODES`, `DECISION`, `FULL`, `run_decision`, `run_full` |
 | `src.adapters` | `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure`, `json_text` |
@@ -114,15 +117,14 @@ Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forb
 |---|---|---|
 | I1 | Grants = round(share x n); 0.36 <= share <= 0.44 | `budget_share`, `allocate`, check "grant rate within budget" (ALERT, non-correctable) |
 | I2 | Default scoring never reads `region_administrative`, `code_postal_3`, `distance_domicile_campus_km`; offset shifts the main model probability for ranking only; `near_cutoff` reads the decision ranking (probability + offset), `disagreement` the raw main percentile | `scoring_features`, `FairPipeline.decide`, `validate(..., ranking=)` |
-| I3 | Region enters a decision only via `ADJUST_OFFSET` (shifts the ranking, hence the `near_cutoff` window, so review follows the decision boundary; `disagreement` stays on the raw main percentile), abs(offset) <= 0.10, recorded; training labels use removal = 1.0 | `fit_offset` grid, `DecisionRecord` |
+| I3 | Region enters a decision only via `ADJUST_OFFSET` (shifts the ranking, hence the `near_cutoff` window, so review follows the decision boundary; `disagreement` stays on the raw main percentile), abs(offset) <= `OFFSET_BOUND` = 0.10, recorded; training labels use removal = 1.0, except that a committee remote penalty >= 0 means no removal (`effective_removal`, `NO_PENALTY_WARNING`) | `OFFSET_BOUND` in `FairPipeline`, `fit_offset` grid, `effective_removal`, `DecisionRecord` |
 | I4 | Same history + batch => identical decisions, scores, record (record has no timestamps) | no RNG in decide path, stable sorts, deterministic LR |
 | I5 | Blocked run never writes `predictions.csv` | `src.adapters.write_decision` writes `predictions.csv` only if `record.published` |
 | I6 | Every harness action is one of `ActionKind` and appears in `record.actions` | `controller.decide` |
 | I7 | Decisions are never fed back as training data; fit uses `history` only | `FairPipeline.fit(history)` |
 | I8 | Tuner never changes live config; `DECLARED_CONFIG` is edited by the team only | `tuner.py` output is CSV only; nothing imports it into `decide` |
 
-DIVERGENCE (I3): bound is enforced only by `controller.OFFSET_GRID = linspace(-0.10, 0.10, 41).round(3)`.
-`FairPipeline.score` and `FairPipeline.predict` accept any offset. Callers other than `fit_offset` can exceed it.
+I3 bound is enforced by `OFFSET_BOUND = 0.10`: `FairPipeline.score/predict/decide` raise `ValueError` beyond it (or for a non-finite offset); `OFFSET_GRID = linspace(-OFFSET_BOUND, OFFSET_BOUND, 41).round(3)` derives from it.
 
 I5 in practice: `src.adapters.write_decision` always writes `decision_record.json` and `explanations.csv` (the
 audit trail of a blocked run) and writes `predictions.csv` only when published; an earlier file stays byte-identical.
@@ -141,9 +143,10 @@ FIT -> DECIDE(offset 0) -> AUDIT --OK/WARN--> PUBLISH
 ```
 - Exactly one correction at most. ALERT after the correction MUST end in BLOCK, exit 3, no fallback policy.
 - `BLOCK.suggestion` = `MERIT_ONLY_SUGGESTION` text for humans; the harness MUST NOT apply it.
-- `moved` / `moved_ids` count final (post-jury) decision differences, so they include jury churn (swaps that change because
-  the ranking shifted). `offset_moved` counts proposal changes from the offset alone, before the jury (`adjusted.proposed != outcome.proposed`).
-- Moved ids go in `record.moved_ids`; gaps before/after are readable from `verdicts[0]` vs `verdicts[1]`.
+- The submission guard (POSTPROCESSING_SPEC §3) runs last; any issue -> BLOCK, exit 3, params `{"checks": ["submission"], "issues": [...]}`.
+- `moved` counts final (post-jury) decision differences against the offset-0 decisions, so it includes jury churn (swaps that change because
+  the ranking shifted). `offset_moved` counts proposal changes from the offset alone, before the jury (`len(record.offset_moved_ids)`).
+- Offset moves go in `record.offset_moved_ids`, jury swaps in `record.jury_moved_ids` (kept separate); gaps before/after are readable from `verdicts[0]` vs `verdicts[1]`.
 - DIVERGENCE: `SELECT_CONFIG` carries no Pareto evidence; `ADJUST_OFFSET.params` has `moved`, `offset_moved` counts and `alerts`,
   not gaps or ids (`controller.decide`). Earlier spec listed evidence, gaps, ids.
 - If `fit_offset` returns 0, no `ADJUST_OFFSET` is recorded; the run goes straight to BLOCK with reason
@@ -180,13 +183,14 @@ Offset is added to the main model probability of remote-region applicants (`is_r
 
 ## 9. Explanations and record
 `explain(pipeline, df, decisions, scores, offset, top=3)` -> columns `id_candidat, decision, score, merit_vote,
-model_vote, offset` (offset x remote flag), `validated` (bool), `trigger_reasons`, `juror_votes`, `jury_outcome`, `factor_1..3` (`"<feature> <+x.xx>"`, top by abs of coef x standardized value).
+model_vote, offset` (offset x remote flag), `validated` (bool), `trigger_reasons`, `juror_votes`, `jury_outcome`, `proposed_decision` (pre-jury proposal), `final_rank` (1..n by score), `factor_1..3` (`"<feature> <+x.xx>"`, top by abs of coef x standardized value).
 `jury_outcome` in `not_reviewed | confirmed | overturn_unpaired | overturned_out | overturned_in`.
 
 `DecisionRecord` fields: `config, share, status ("published"|"blocked"), ids, decisions, scores, offset, verdicts,
-actions, moved_ids, explanations, region_rates, input_hashes` (sha256 per input file name), `jury` (counts: `triggered`, `overturned_out`, `overturned_in`, `reasons` per trigger).
-`src.adapters.write_decision(record, out_dir)` always writes `decision_record.json` (strict JSON via `src.adapters.json_text`: non-finite floats become null; `summary()`: status, config, share, grants, applicants, offset,
-actions, verdicts with checks, moved_ids, region_rates, jury, input_hashes) and `explanations.csv`;
+actions, proposed, submission_issues, offset_moved_ids, jury_moved_ids, explanations, region_rates, input_hashes` (sha256 per input file name),
+`jury` (counts: `triggered`, `overturned_out`, `overturned_in`, `reasons` per trigger), `warnings`, `label_correction`.
+`src.adapters.write_decision(record, out_dir)` always writes `decision_record.json` (strict JSON via `src.adapters.json_text`: non-finite floats become null; `summary()`: status, config, share, grants, proposed_grants, applicants, offset,
+actions, verdicts with checks, submission_issues, offset_moved_ids, jury_moved_ids, warnings, label_correction, region_rates, jury, input_hashes) and `explanations.csv`;
 writes `predictions.csv` (`id_candidat, decision_octroi`) only when published (I5).
 Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 
@@ -198,16 +202,16 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
   4 workers) ∥ `decide` -> `write_decision`}; in FULL `share` is taken from the decision record, so the Pareto branch
   starts after `decide`; exit 1 on `DataValidationError`/`InputError`/`FileNotFoundError`/`KeyError` (nothing written), 3 if blocked. `decide` CLI
   runs `src.pipelines.DECISION`. Same artifacts as `decide`.
-- `decide(history, batch, input_hashes, config=DECLARED_CONFIG, eo_gap_alert=EO_GAP_ALERT) -> DecisionRecord` is pure:
-  no file I/O, no printing; logs through `get_logger("harness")`.
+- `decide(history, batch, input_hashes, config=DECLARED_CONFIG, eo_gap_alert=EO_GAP_ALERT, nodes=POSTPROCESSING_NODES) -> DecisionRecord` is pure:
+  no file I/O, no printing; logs through `get_logger("harness")`. `nodes` is a test seam for injecting nodes.
   DIVERGENCE: earlier spec gave a `workers` parameter; code has none (`controller.decide`).
 
 ## 11. Acceptance checks
-`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` runs 28 checks, all PASS:
+`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` runs 47 checks, all PASS (numbered groups):
 1. `baseline`: 4,000 rows, 1,598 grants (39.94 %), `published`, no `ADJUST_OFFSET`, strict-JSON record, ids in batch order; share read from data.
 2. `budget_guard`: history rate outside 36-44 % => exit 1, one ERROR line, no traceback, no files.
 3. `duplicate_id`: duplicated `id_candidat` => exit 1, no traceback, no files.
-4. `forced_correctable_alert`: `eo_gap_alert=0.015` => `ADJUST_OFFSET`, abs(offset) <= 0.10, `moved_ids` non-empty, grants = `round(share x n)`.
+4. `forced_correctable_alert`: `eo_gap_alert=0.015` => `ADJUST_OFFSET`, abs(offset) <= 0.10, two verdicts, `offset_moved_ids` and `jury_moved_ids` match an independent `decide(offset)`, grants = `round(share x n)` = 1,598.
 5. `zero_offset_block`: `fit_offset` patched to 0 => actions `[SELECT_CONFIG, BLOCK]`, reason `NO_OFFSET_REASON`, one verdict.
 6. `drift_block`: `cote_r_equivalent` + 3 => exit 3, `blocked`, no `ADJUST_OFFSET`, BLOCK lists "feature drift, max PSI", pre-existing `predictions.csv` byte-identical (I5).
 7. `categorical_drift`: `premiere_generation_universitaire` all 0 => exit 3, blocks via non-correctable "categorical drift, max PSI" ALERT (first-gen moved out of numeric PSI), no `ADJUST_OFFSET`.
@@ -229,9 +233,13 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 26. `graph_runtime`: `src.common.graph` runtime contract (section 8.1 of PREPROCESSING_SPEC).
 27. `cli_invalid_batch`: income 0 in batch => `decide` CLI exit 1, no traceback, nothing written, sentinel `predictions.csv` intact.
 28. `extra_fields`: CLI rejects rows with more fields than header, exit 1, nothing written.
+29. `explain_identity`, `jury_grant_count`, `jury_swap_symmetry`, `jury_region_invariance`, `jury_determinism`, `jury_record`, `jury_offset_monotone`: JURY_SPEC §7 (grants stay `k`, out = in swaps, region invariance, determinism, record counts: 201 triggered, 37 out / 37 in on the real batch, offset monotone over `OFFSET_GRID`).
+30. `label_correction`, `correction_report`, `decide_skips_bootstrap`, `tiny_history_report`, `reference_consistency`, `fit_uses_history_rate`: LABEL_CORRECTION_SPEC §6 (k = 3,994, flips 651 in / 651 out, penalty CI and slope test, `decide` skips the bootstrap, tiny history reports a null CI, `reference_labels` equals training labels including a region-swapped history, fit uses the history grant rate).
+31. `cli_record`, `cli_replay`: CLI record carries `label_correction` (penalty about -1.90, CI about [-2.07, -1.73], slope p about 0.82) and `warnings` `[]`; two CLI runs replay byte-identically.
+32. `postprocessing_default`, `submission_guard`, `submission_probes`, `offset_bound`, `explain_fields`: POSTPROCESSING_SPEC §7 (default run published with 1,598 grants and empty `submission_issues`; guard blocks malformed output, exit 3; probes for ids, missing values, non-binary and wrong-count decisions; `OFFSET_BOUND` enforced, `OFFSET_GRID` has 41 points; `explain` has `proposed_decision` and `final_rank`).
 
 ## 12. Open risks
 - Declared jury rests on red-team simulation, not the hidden reference.
 - Percentile votes depend on batch composition.
 - Corrections inherit the proxy references' assumptions; both are derived from the audited committee.
-- Offset bound is not enforced inside `FairPipeline` (I3 divergence).
+- A malformed output from an injected/corrupted node (wrong length or NaN) raises before the BLOCK record is built: fails closed (exit 1, nothing written), not a recorded BLOCK.

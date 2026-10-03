@@ -21,16 +21,25 @@ question, recorded as a limitation in `PREPROCESSING_SPEC.md` §1).
 
 - `LabelCorrection(frozen)`: `labels` (int array), `penalty` (float), `k` (int), `flipped_in` (index array: refused
   historically, positive after correction), `flipped_out` (granted historically, negative after correction).
-- `correct_labels(history, share, removal=1.0) -> LabelCorrection`. Uses `CommitteeModel`; deterministic.
-- `CorrectionReport(frozen)`: `penalty`, `penalty_ci` (2.5 %, 97.5 %), `slope_test_statistic`, `slope_test_df`,
+- `correct_labels(history, share, removal=1.0) -> LabelCorrection`. Uses `CommitteeModel`; deterministic. `share` must
+  be the history's own grant rate; raises `ValueError` when `round(share x n)` differs from the history's grant count
+  (flips would be unequal).
+- `effective_removal(penalty, removal) -> float`: the penalty-sign rule (`penalty >= 0` → no removal). Shared by
+  `correct_labels` and `reference_labels` (corrected reference used by monitoring, `fit_offset`, tuner, Pareto), so
+  training labels and the corrected reference always agree.
+- `CorrectionReport(frozen)`: `penalty`, `penalty_ci` (`tuple | None`; 2.5 %, 97.5 %; None when no valid bootstrap
+  resample remains, JSON `null`), `slope_test_statistic`, `slope_test_df`,
   `slope_test_p`, `flipped_in`, `flipped_out`, `flipped_in_remote`, `flipped_out_centre`.
 - `correction_report(history, share, n_boot=200, seed=0, workers=4) -> CorrectionReport`:
   - Penalty CI: nonparametric bootstrap of the committee fit (resample rows with `numpy.random.default_rng(seed)`),
-    fits in a `ThreadPoolExecutor(max_workers=workers)`.
+    fits in a `ThreadPoolExecutor(max_workers=workers)`. Resamples with only one class are dropped.
   - Slope-equality test: likelihood-ratio test between the committee model and the same model plus
     remote x feature interactions, both unpenalized (`LogisticRegression(C=np.inf)`; `penalty=None` is deprecated in
     scikit-learn 1.8), statistic = 2 x (log-loss sum difference), df = 8, p from `scipy.stats.chi2.sf`.
-- `FairPipeline.fit` calls `correct_labels` and stores `label_correction_`. The report is not on the decision path.
+- `FairPipeline.fit` calls `correct_labels(history, history["decision_octroi"].mean(), removal)` and stores
+  `label_correction_`: the correction share is the training history's own grant rate, so k equals the historical
+  grant count and flips balance (also on evaluation/tuner splits). The batch budget `FairPipeline.share` is unchanged.
+  The report is not on the decision path.
 - Export `LabelCorrection`, `correct_labels`, `CorrectionReport`, `correction_report` via `src.policy.__all__` (lazy).
 
 ## 3. Guards (recorded, never silently change the policy)
@@ -39,10 +48,13 @@ question, recorded as a limitation in `PREPROCESSING_SPEC.md` §1).
 |---|---|
 | `penalty >= 0` (no penalty against remote) | corrected labels equal the committee's own ranking; record warning `no regional penalty found` |
 | penalty CI includes 0 | record warning `penalty not distinguishable from zero` |
+| `penalty_ci` is None (every bootstrap resample single-class) | `penalty_ci` None (JSON `null`); record warning `penalty not distinguishable from zero` |
 | `slope_test_p < 0.05` | record warning `group-specific committee rules; single-penalty correction may be incomplete` |
-| `len(flipped_in) != len(flipped_out)` | impossible by construction (fixed k); raise `ValueError` |
+| `round(share x n)` differs from the history's grant count (flips unequal) | `correct_labels` raises `ValueError`; callers pass the history's own grant rate |
 
-Warnings go to `DecisionRecord.warnings`; none blocks a decision.
+Warnings go to `DecisionRecord.warnings`; none blocks a decision. The decision path adds `no regional penalty found`
+(from `pipeline.label_correction_.penalty`); `report_warnings(report)` (function, not a report field) adds the CI and
+slope warnings in the pipelines `record` node.
 
 ## 4. Composition (node graph)
 

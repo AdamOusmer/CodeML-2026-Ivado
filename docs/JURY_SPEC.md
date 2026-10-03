@@ -1,6 +1,6 @@
 # Jury specification (validator jury)
 
-Status: implemented (HEAD 99d580e). Replaces the rank-vote jury (`Config.jury_weights`) in `FairPipeline`.
+Status: implemented (HEAD ac936d0 + uncommitted declared-config change in `src/policy/models.py`). Replaces the rank-vote jury (`Config.jury_weights`) in `FairPipeline`.
 Conforms to `HARNESS_SPEC.md` (§3–5 boundaries, invariants) and `PREPROCESSING_SPEC.md` (scoring features).
 Evidence: §8. Study scripts: session scratchpad `validator_jury_study.py`, `jury_study.py` (not in the repo).
 
@@ -38,17 +38,20 @@ No juror reads `region_administrative`, `code_postal_3` or `distance_domicile_ca
 
 | Trigger | Rule | Default |
 |---|---|---|
-| Near cutoff | abs(main rank − (k − 0.5)) ≤ `band` × n | `band = 0.025` (≈ 100 of 4,000 each side) |
-| Low confidence | `0.5 − conf < main probability < 0.5 + conf` | `conf = 0.15` |
+| Near cutoff | abs(decision rank − (k − 0.5)) ≤ `band` × n (decision rank = rank of main probability + offset) | `band = 0.025` (≈ 100 of 4,000 each side) |
+| ~~Low confidence~~ | removed (see below) | - |
 | Strong disagreement | max over jurors of abs(juror percentile − main percentile) > `disagree` | `disagree = 0.30` |
+
+Low-confidence trigger (probability in 0.5 ± 0.15) removed with `JurySettings.conf`. Evidence (10 splits): disabling it
+changes the worst-case score by +0.0005 ± 0.0010. The window 0.35–0.65 lies below the batch cutoff
+probability (about 0.68), so it flagged only refusals; cutoff-centered windows were identical to disabled because `near_cutoff` already covers them.
 
 `band` dominates: 0.025 → worst case 0.929, 0.05 → 0.915, 0.10 → 0.872. Do not widen without re-running the study.
 
 ## 4. Verdict and swaps
 
-- Overturn when the share of jurors voting `OVERTURN` ≥ `quorum`; `quorum = 1.0` (heavy majority: with two jurors,
-  both must agree).
-- Strength of an overturn = abs(mean juror percentile − (1 − k/n)).
+- Overturn when the share of jurors voting `OVERTURN` ≥ `quorum`; `quorum = 1.0` (unanimous; with two jurors, both must agree).
+- Strength of an overturn = mean over jurors voting `OVERTURN` of abs(juror percentile − (1 − k/n)); confirming jurors do not count.
 - Swaps: `s = min(#overturned grants, #overturned refusals)`; remove the `s` strongest overturned grants, add the
   `s` strongest overturned refusals; unpaired overturns stand as proposed. Grant count stays exactly k (I1).
 - Deterministic: stable sorts; ties in strength broken by main rank.
@@ -56,13 +59,13 @@ No juror reads `region_administrative`, `code_postal_3` or `distance_domicile_ca
 ## 5. Components
 
 ### 5.1 Policy — `src/policy/jury.py` (pure, numpy only)
-- `JurySettings(frozen)`: `band=0.025`, `conf=0.15`, `disagree=0.30`, `quorum=1.0`, `jurors=("merit", "programme_merit")`.
+- `JurySettings(frozen)`: `band=0.025`, `disagree=0.30`, `quorum=1.0`, `jurors=("merit", "programme_merit")` (class default; declared config overrides to `("merit",)`).
 - `JuryOutcome`: `decisions`, `proposed`, `triggered` (bool array), `reasons` (per applicant: subset of
-  `near_cutoff`, `low_confidence`, `disagreement`), `votes` (juror → array), `overturned_out`, `overturned_in` (index arrays).
+  `near_cutoff`, `disagreement`), `votes` (juror → array), `overturned_out`, `overturned_in` (index arrays).
 - `validate(main_probability, juror_scores: dict[str, array], k, settings) -> JuryOutcome`.
 
 ### 5.2 Policy — `src/policy/models.py`
-- `Config`: replace `jury_weights` with `jury: JurySettings`; `DECLARED_CONFIG = Config("validator jury")`.
+- `Config`: replace `jury_weights` with `jury: JurySettings`; `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))`.
 - `FairPipeline.fit` also stores programme statistics from history (`programme_stats_`).
 - `FairPipeline.juror_scores(df) -> dict`; `FairPipeline.decide(df, offset=0.0) -> JuryOutcome`;
   `predict(df, offset)` returns `decide(...).decisions`; `score(df, offset)` returns the main model's score
@@ -100,7 +103,7 @@ J1 can start now. J2 waits for PREPROCESSING P1 (both edit `src/policy/models.py
 - Invariance: shuffling region, postal code and distance leaves `decide(batch).decisions` unchanged (I2).
 - Swap symmetry: `len(overturned_out) == len(overturned_in)`.
 - Determinism: replay identical decisions and outcome arrays.
-- On the real batch: triggered ≈ 150–250, swaps ≈ 20–40; report the exact numbers in the record.
+- On the real batch: triggered ≈ 150–250, swaps ≈ 20–40; report the exact numbers in the record (current: triggered 201, 37 swaps).
 
 ## 8. Evidence (10 splits; paired differences ± 2 SE)
 
@@ -120,7 +123,9 @@ self-agreement.
 
 ## 9. Implementation notes (divergences from the design above)
 - `validate(main_probability, juror_scores, k, settings, ranking=None)`: `ranking` (default the probability) orders the proposal;
-  triggers and the low-confidence window read the raw probability. Red-team: with shifted triggers the offset correction was sign-inverted.
+  `near_cutoff` uses the rank of `ranking` (main probability + offset on remote applicants), so review sits at the boundary of the decision actually being made;
+  `disagreement` uses the raw main percentile; juror votes read juror scores only. Orchestrator choice: at offset +0.03, raw-rank `near_cutoff` would review 14 different
+  applicants and change 8 final decisions (Codex flagged the ambiguity). Earlier red-team: shifting all triggers inverted the correction.
   `FairPipeline.decide(df, offset)` passes `probability + offset * is_remote` as `ranking`.
 - `JuryOutcome` has an extra `overturned` mask (all overturns, paired or not). Unpaired overturns keep the proposal and are labelled
   `overturn_unpaired` in `explanations.csv`.
@@ -129,7 +134,21 @@ self-agreement.
 - Tuner skips quorum 0.5 with a single juror (identical to quorum 1.0): 9 configs, not 12.
 - Acceptance adds `jury_offset_monotone`: grants == k at all 41 offsets; remote grants non-decreasing within 2 applicants.
 
-## 10. Open questions (not fixed)
-- Low-confidence window (probability 0.35-0.65) lies below the batch cutoff (p about 0.68), so it only flags refusals.
-- With `quorum` < 1 the swap strength averages in the confirming juror's percentile.
-- Offset on the probability scale has small reach: +0.10 moves about 11 remote grants (587 / 595 / 606 at -0.10 / 0 / +0.10).
+- Swap strength averages |juror percentile − cutoff| over dissenting jurors only (OVERTURN voters), so a confirming juror no longer dilutes it. Quorum stays 1.0.
+- Low-confidence trigger removed (`JurySettings.conf` gone, `JURY_REASONS = (near_cutoff, disagreement)`); evidence in §3.
+- `ADJUST_OFFSET.params` gains `offset_moved` (proposal changes from the offset alone, before the jury); `moved` stays the final diff.
+- Declared config is merit-only (user decision, WP9): `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))`.
+  Evidence, 10 splits, paired vs the previous two-juror unanimous config, ±2 SE: stress reference +0.0057 ± 0.0037; worst case over 2 refs +0.0034 ± 0.0039;
+  quorum 0.5 two-juror on stress +0.0047 ± 0.0057; main model only on stress −0.016 ± 0.013. Caveat: the merit juror is also the merit reference.
+  Real batch: triggered 201 (near_cutoff 200, disagreement 2), 37 swaps.
+
+## 10. Open questions
+Resolved:
+- Low-confidence window: trigger removed (§3).
+- Strength with `quorum` < 1: fixed, averages over dissenting jurors only (§9).
+- Offset scale: kept on probability. Percentile scale reaches −58..+56 remote grants at ±0.10, too coarse for the 0.005 grid; probability scale −8..+11 remote grants,
+  monotone, 23 distinct decision sets over 41 points (acceptance `jury_offset_monotone`: 586 / 594 / 606 at −0.10 / 0 / +0.10).
+
+Open:
+- Corrector reach at the 0.05 alert threshold is untested on a real drifted batch (forced drift study, remote R −1.5, did not reach ALERT).
+- Merit self-agreement: the merit juror is also the merit reference, so merit-reference scores are partly self-agreement.

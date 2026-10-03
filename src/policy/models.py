@@ -18,7 +18,7 @@ class Config:
     jury: JurySettings = JurySettings()
 
 
-DECLARED_CONFIG = Config("validator jury")
+DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))
 
 
 class CommitteeModel:

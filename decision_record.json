@@ -1,16 +1,14 @@
 {
   "status": "published",
   "config": {
-    "name": "validator jury",
+    "name": "validator jury, merit",
     "removal": 1.0,
     "jury": {
       "band": 0.025,
-      "conf": 0.15,
       "disagree": 0.3,
       "quorum": 1.0,
       "jurors": [
-        "merit",
-        "programme_merit"
+        "merit"
       ]
     }
   },
@@ -23,7 +21,7 @@
       "kind": "SELECT_CONFIG",
       "reason": "declared configuration",
       "params": {
-        "config": "validator jury"
+        "config": "validator jury, merit"
       }
     }
   ],
@@ -41,7 +39,7 @@
         },
         {
           "name": "demographic parity gap (centre vs remote)",
-          "value": 0.05737080020385249,
+          "value": 0.05840663597830548,
           "threshold": "warn > 0.1",
           "status": "OK",
           "detail": "centre 42.3%, remote 36.5%",
@@ -57,7 +55,7 @@
         },
         {
           "name": "opportunity gap vs merit reference",
-          "value": 0.011376521981596777,
+          "value": 0.007690812765633881,
           "threshold": "warn > 0.03, alert > 0.05",
           "status": "OK",
           "detail": "deserving = top R scores at the same budget",
@@ -73,7 +71,7 @@
         },
         {
           "name": "largest intersectional gap (centre vs remote)",
-          "value": 0.06417948883023239,
+          "value": 0.06396274598167345,
           "threshold": "warn > 0.15",
           "status": "OK",
           "detail": "first-generation",
@@ -108,12 +106,11 @@
   ],
   "moved_ids": [],
   "jury": {
-    "triggered": 207,
-    "overturned_out": 36,
-    "overturned_in": 36,
+    "triggered": 201,
+    "overturned_out": 37,
+    "overturned_in": 37,
     "reasons": {
       "near_cutoff": 200,
-      "low_confidence": 102,
       "disagreement": 2
     }
   },
@@ -121,8 +118,8 @@
     "Bas-Saint-Laurent": 0.3512,
     "Capitale-Nationale": 0.4275,
     "Cote-Nord": 0.3503,
-    "Gaspesie-Iles-de-la-Madeleine": 0.3886,
-    "Montreal": 0.4204
+    "Gaspesie-Iles-de-la-Madeleine": 0.387,
+    "Montreal": 0.421
   },
   "input_hashes": {
     "donnees_demandes.csv": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",

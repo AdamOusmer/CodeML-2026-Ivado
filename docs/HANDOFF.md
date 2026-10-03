@@ -29,7 +29,7 @@ Tags: [R] = reproduced on `feat/validator-jury` after the rebase with command sh
 | Logging | `src/common/logging/runtime.py` | done | each CLI run writes timestamped file in `logs/` unless `--no-log-file` [R] |
 
 `predictions.csv` check [R] (`OMP_NUM_THREADS=2 uv run python model_corrige.py`): columns `id_candidat,decision_octroi`; 4,000 rows; grant rate 0.3995 (in 36–44 %); id order identical to `data/candidats_evaluation.csv`.
-Acceptance [R] `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py`: 30/30 passed in 26 s.
+Acceptance [R] `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py`: 34/34 passed in 37 s.
 
 ## 2. How to run
 
@@ -64,7 +64,7 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 | WP | Task | Model | Depends | Done when |
 |---|---|---|---|---|
 | 7 | ✅ Done: Codex gpt-6.1-sol + Fable review of `5a126b2..HEAD`; all P1/P2 fixed (fit_offset max-gap objective, NaN metrics → blocking ALERT, binary PSI, qcut edges, id validation, clean ValueError exit) | Codex + Fable | — | done |
-| 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → ACCEPTANCE_COUNT PASS (baseline, budget guard, duplicate id, correction, drift BLOCK + I5 sentinel, I4 replay, I2, I8, explain identity, boundaries with injected-edge proof, jury checks) | Sonnet | 7 | done |
+| 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → 34/34 PASS (baseline, budget guard, duplicate id, correction, drift BLOCK + I5 sentinel, I4 replay, I2, I8, explain identity, boundaries with injected-edge proof, jury checks) | Sonnet | 7 | done |
 | 9 | ✅ Done: user picked merit-only jury; `DECLARED_CONFIG` in `models.py`, HARNESS_SPEC §8, JURY_SPEC §9 (evidence), acceptance rerun | Opus presents, user decides | — | done |
 | 10 | `audit_rapport.ipynb` (10-section outline in FINDINGS §6), sklearn only, no statsmodels | Sonnet | — | `jupyter nbconvert --execute` runs top to bottom on `data/`, exit 0, no errors in cells |
 | 11 | README: replace top with our solution, commands, artifacts; keep organizer brief below | Sonnet | 8 | every command in README run once, exit 0 |

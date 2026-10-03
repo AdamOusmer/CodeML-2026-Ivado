@@ -2,7 +2,7 @@
 
 Tags: [R] re-run this session (cmd given). [U] unverified, source: prior session (not reproducible without new code). Scratch outputs: /private/tmp/ff/.
 Revision: validator jury replaces the rank-vote jury; declared config now merit-only, low-confidence trigger removed, swap strength over dissenters only. Sections 1-4 re-verified at ac936d0 (not touched here). Sections 5 and 7 re-run this session.
-Acceptance: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` -> 30/30 passed in 26 s.
+Acceptance: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` -> 34/34 passed in 37 s.
 
 ## 1. Bias
 | Item | Value | Tag |

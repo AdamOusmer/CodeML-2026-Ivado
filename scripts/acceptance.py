@@ -969,6 +969,22 @@ def check_reference_consistency(ctx) -> str:
     return f"reference == training labels; penalty current={penalties['current']:+.3f} swapped={penalties['swapped']:+.3f}"
 
 
+def check_tune_requires_penalty(ctx) -> str:
+    from src.evaluation import SEARCH_SPACE, tune
+    from src.policy import budget_share, is_remote
+
+    history = ctx["history"].copy()
+    remote = is_remote(history).astype(bool)
+    history["region_administrative"] = np.where(remote, "Montreal", "Cote-Nord")
+    try:
+        tune(history, budget_share(history), SEARCH_SPACE[:1], splits=1, workers=1)
+    except ValueError as error:
+        assert str(error) == "no regional penalty: equity undefined", f"message {error}"
+    else:
+        raise AssertionError("tune returned a table without a regional penalty")
+    return "region-swapped history (penalty > 0) -> ValueError, no -inf table"
+
+
 def check_fit_uses_history_rate(ctx) -> str:
     from sklearn.model_selection import train_test_split
 
@@ -1242,6 +1258,7 @@ def main() -> int:
     run_check("decide_skips_bootstrap", check_decide_skips_bootstrap, ctx)
     run_check("tiny_history_report", check_tiny_history_report, ctx)
     run_check("reference_consistency", check_reference_consistency, ctx)
+    run_check("tune_requires_penalty", check_tune_requires_penalty, ctx)
     run_check("fit_uses_history_rate", check_fit_uses_history_rate, ctx)
     run_check("cli_record", check_cli_record, ctx)
     run_check("cli_replay", check_cli_replay, ctx)

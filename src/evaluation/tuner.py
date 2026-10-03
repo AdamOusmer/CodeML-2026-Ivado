@@ -37,7 +37,10 @@ def score_split(history, share, config, seed):
     for name in REFERENCES:
         reference = references[name]
         gap = eo_gap(decisions, reference, remote)
-        equity = 1 - gap / eo_gap(committee_decisions, reference, remote)
+        baseline_gap = eo_gap(committee_decisions, reference, remote)
+        if not baseline_gap > 0:
+            raise ValueError("no regional penalty: equity undefined")
+        equity = 1 - gap / baseline_gap
         utility = scaled_utility(decisions, reference, share)
         row[f"eo_gap_{name}"] = gap
         row[f"equity_{name}"] = equity

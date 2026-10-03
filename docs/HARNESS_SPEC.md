@@ -176,7 +176,7 @@ Offset is added to the main model probability of remote-region applicants (`is_r
   and `FairPipeline(DECLARED_CONFIG)`. Pareto axes: eo_gap vs acc_historical; only `budget_ok` rows eligible.
 - `tune`: per `Config` in `SEARCH_SPACE` (9 configs: band {0.0125, 0.025, 0.05} x quorum {0.5, 1.0} x jurors {merit; merit+programme_merit}, quorum 0.5 with one juror skipped as identical; removal 1.0), per reference r in {corrected, merit}:
   `equity_r = 1 - gap_r / gap_r(committee, removal 0, at budget)`, `utility_r = scaled_utility`,
-  `score_r = (20 equity_r + 15 utility_r) / 35`; `worst_case = min(score_corrected, score_merit)`. Output `resultats_tuner.csv`.
+  `score_r = (20 equity_r + 15 utility_r) / 35`; `worst_case = min(score_corrected, score_merit)`. A committee baseline gap of 0 (no regional penalty) leaves equity undefined: `tune` raises `ValueError("no regional penalty: equity undefined")`. Output `resultats_tuner.csv`.
 - Team reads table, edits `DECLARED_CONFIG` in `src/policy/models.py` by hand. Neither `tune` nor `pareto` feeds `decide`.
 - Currently `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))` (removal 1.0, band 0.025, disagree 0.30, quorum 1.0). User decision (WP9); evidence in JURY_SPEC §9.
   The jury band sweep in `pareto` uses the same juror set, so its band 0.025 row equals the declared row.
@@ -207,7 +207,7 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
   DIVERGENCE: earlier spec gave a `workers` parameter; code has none (`controller.decide`).
 
 ## 11. Acceptance checks
-`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` runs 47 checks, all PASS (numbered groups):
+`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` runs 48 checks, all PASS (numbered groups):
 1. `baseline`: 4,000 rows, 1,598 grants (39.94 %), `published`, no `ADJUST_OFFSET`, strict-JSON record, ids in batch order; share read from data.
 2. `budget_guard`: history rate outside 36-44 % => exit 1, one ERROR line, no traceback, no files.
 3. `duplicate_id`: duplicated `id_candidat` => exit 1, no traceback, no files.
@@ -235,8 +235,9 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 28. `extra_fields`: CLI rejects rows with more fields than header, exit 1, nothing written.
 29. `explain_identity`, `jury_grant_count`, `jury_swap_symmetry`, `jury_region_invariance`, `jury_determinism`, `jury_record`, `jury_offset_monotone`: JURY_SPEC §7 (grants stay `k`, out = in swaps, region invariance, determinism, record counts: 201 triggered, 37 out / 37 in on the real batch, offset monotone over `OFFSET_GRID`).
 30. `label_correction`, `correction_report`, `decide_skips_bootstrap`, `tiny_history_report`, `reference_consistency`, `fit_uses_history_rate`: LABEL_CORRECTION_SPEC §6 (k = 3,994, flips 651 in / 651 out, penalty CI and slope test, `decide` skips the bootstrap, tiny history reports a null CI, `reference_labels` equals training labels including a region-swapped history, fit uses the history grant rate).
-31. `cli_record`, `cli_replay`: CLI record carries `label_correction` (penalty about -1.90, CI about [-2.07, -1.73], slope p about 0.82) and `warnings` `[]`; two CLI runs replay byte-identically.
-32. `postprocessing_default`, `submission_guard`, `submission_probes`, `offset_bound`, `explain_fields`: POSTPROCESSING_SPEC §7 (default run published with 1,598 grants and empty `submission_issues`; guard blocks malformed output, exit 3; probes for ids, missing values, non-binary and wrong-count decisions; `OFFSET_BOUND` enforced, `OFFSET_GRID` has 41 points; `explain` has `proposed_decision` and `final_rank`).
+31. `tune_requires_penalty`: region-swapped history (penalty > 0) => `tune` raises `ValueError("no regional penalty: equity undefined")`, never a `-inf` table.
+32. `cli_record`, `cli_replay`: CLI record carries `label_correction` (penalty about -1.90, CI about [-2.07, -1.73], slope p about 0.82) and `warnings` `[]`; two CLI runs replay byte-identically.
+33. `postprocessing_default`, `submission_guard`, `submission_probes`, `offset_bound`, `explain_fields`: POSTPROCESSING_SPEC §7 (default run published with 1,598 grants and empty `submission_issues`; guard blocks malformed output, exit 3; probes for ids, missing values, non-binary and wrong-count decisions; `OFFSET_BOUND` enforced, `OFFSET_GRID` has 41 points; `explain` has `proposed_decision` and `final_rank`).
 
 ## 12. Open risks
 - Declared jury rests on red-team simulation, not the hidden reference.

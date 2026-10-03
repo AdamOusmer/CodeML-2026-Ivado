@@ -1,14 +1,16 @@
 {
   "status": "published",
   "config": {
-    "name": "validator jury, merit",
+    "name": "validator jury",
     "removal": 1.0,
     "jury": {
       "band": 0.025,
+      "conf": 0.05,
       "disagree": 0.3,
       "quorum": 1.0,
       "jurors": [
-        "merit"
+        "merit",
+        "programme_merit"
       ]
     }
   },
@@ -21,7 +23,7 @@
       "kind": "SELECT_CONFIG",
       "reason": "declared configuration",
       "params": {
-        "config": "validator jury, merit"
+        "config": "validator jury"
       }
     }
   ],
@@ -39,7 +41,7 @@
         },
         {
           "name": "demographic parity gap (centre vs remote)",
-          "value": 0.05840663597830548,
+          "value": 0.05737080020385249,
           "threshold": "warn > 0.1",
           "status": "OK",
           "detail": "centre 42.3%, remote 36.5%",
@@ -55,7 +57,7 @@
         },
         {
           "name": "opportunity gap vs merit reference",
-          "value": 0.007690812765633881,
+          "value": 0.009661256115387484,
           "threshold": "warn > 0.03, alert > 0.05",
           "status": "OK",
           "detail": "deserving = top R scores at the same budget",
@@ -63,7 +65,7 @@
         },
         {
           "name": "opportunity gap vs corrected committee",
-          "value": 0.01770886078064704,
+          "value": 0.01603941169884404,
           "threshold": "warn > 0.03, alert > 0.05",
           "status": "OK",
           "detail": "deserving = committee rule without regional penalty",
@@ -71,7 +73,7 @@
         },
         {
           "name": "largest intersectional gap (centre vs remote)",
-          "value": 0.06396274598167345,
+          "value": 0.0655400330479195,
           "threshold": "warn > 0.15",
           "status": "OK",
           "detail": "first-generation",
@@ -104,22 +106,112 @@
       ]
     }
   ],
-  "moved_ids": [],
+  "proposed_grants": 1598,
+  "submission_issues": [],
+  "offset_moved_ids": [],
+  "jury_moved_ids": [
+    "C004620",
+    "C007357",
+    "C009200",
+    "C001899",
+    "C003643",
+    "C001760",
+    "C003360",
+    "C000352",
+    "C008334",
+    "C012511",
+    "C010924",
+    "C006411",
+    "C007779",
+    "C013424",
+    "C013151",
+    "C009441",
+    "C011393",
+    "C008863",
+    "C013546",
+    "C000385",
+    "C006395",
+    "C008908",
+    "C011403",
+    "C004541",
+    "C002781",
+    "C009286",
+    "C007625",
+    "C008855",
+    "C006690",
+    "C007410",
+    "C004599",
+    "C012096",
+    "C010695",
+    "C012542",
+    "C010997",
+    "C001213",
+    "C000766",
+    "C004316",
+    "C010653",
+    "C007012",
+    "C005171",
+    "C010045",
+    "C003871",
+    "C008358",
+    "C010148",
+    "C008598",
+    "C000222",
+    "C004210",
+    "C008439",
+    "C010524",
+    "C008102",
+    "C009702",
+    "C010310",
+    "C009412",
+    "C007338",
+    "C006691",
+    "C003885",
+    "C000169",
+    "C009640",
+    "C003609",
+    "C000790",
+    "C002916",
+    "C004913",
+    "C006584",
+    "C001031",
+    "C012963",
+    "C004261",
+    "C006403",
+    "C004591",
+    "C000638"
+  ],
+  "warnings": [],
+  "label_correction": {
+    "penalty": -1.9002359476848831,
+    "penalty_ci": [
+      -2.0676156129465344,
+      -1.7265981985121208
+    ],
+    "slope_test_statistic": 4.380409070740825,
+    "slope_test_df": 8,
+    "slope_test_p": 0.8212751433508849,
+    "flipped_in": 651,
+    "flipped_out": 651,
+    "flipped_in_remote": 432,
+    "flipped_out_centre": 577
+  },
   "jury": {
     "triggered": 201,
-    "overturned_out": 37,
-    "overturned_in": 37,
+    "overturned_out": 35,
+    "overturned_in": 35,
     "reasons": {
       "near_cutoff": 200,
+      "low_confidence": 35,
       "disagreement": 2
     }
   },
   "region_rates": {
-    "Bas-Saint-Laurent": 0.3512,
+    "Bas-Saint-Laurent": 0.3532,
     "Capitale-Nationale": 0.4275,
     "Cote-Nord": 0.3503,
     "Gaspesie-Iles-de-la-Madeleine": 0.387,
-    "Montreal": 0.421
+    "Montreal": 0.4204
   },
   "input_hashes": {
     "donnees_demandes.csv": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",

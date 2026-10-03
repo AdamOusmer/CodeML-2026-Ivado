@@ -38,7 +38,7 @@ class Candidate:
 def evaluate_split(history: pd.DataFrame, share: float, seed: int, candidate: Candidate) -> dict:
     train, test = train_test_split(history, test_size=0.3, random_state=seed, stratify=history["decision_octroi"])
     decisions = candidate.decide(train, test, share)
-    references = policy.held_out_references(train, test, share)
+    references = policy.reference_labels(train, test, share)
     row = policy.evaluate(candidate.name, candidate.family, decisions, references, policy.is_remote(test), candidate.setting)
     return {**row, "seed": seed}
 

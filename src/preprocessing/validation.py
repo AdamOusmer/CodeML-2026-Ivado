@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from src.common.logging import RunContext
+from src.policy.regions import REGIONS
 
 FEATURE_COLUMNS = (
     "id_candidat", "cote_r_equivalent", "programme_etudes", "region_administrative",
@@ -17,10 +18,6 @@ FEATURE_COLUMNS = (
     "distance_domicile_campus_km", "premiere_generation_universitaire",
 )
 LABEL_COLUMN = "decision_octroi"
-REGIONS = (
-    "Montreal", "Capitale-Nationale", "Bas-Saint-Laurent", "Cote-Nord",
-    "Gaspesie-Iles-de-la-Madeleine",
-)
 PROGRAMS = {"Genie", "Arts et lettres", "Sciences", "Sante", "Sciences sociales"}
 NUMERIC_RANGES = {
     "cote_r_equivalent": (15, 40),

@@ -9,7 +9,9 @@ from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from src.policy import BUDGET_BOUNDS, eo_gap, is_remote, legitimate_features, reference_labels
+from src.common.graph import Graph, Node
+from src.policy import (BUDGET_BOUNDS, PROGRAMMES, REGIONS, SCORING_FEATURES, eo_gap, is_remote, reference_labels,
+                        scoring_features)
 
 DP_GAP_WARN = 0.10
 IMPACT_RATIO_WARN = 0.80
@@ -17,9 +19,10 @@ EO_GAP_WARN, EO_GAP_ALERT = 0.03, 0.05
 INTERSECTION_GAP_WARN = 0.15
 PROXY_AUC_DRIFT_ALERT = 0.05
 PSI_WARN, PSI_ALERT = 0.10, 0.25
-MAX_CATEGORIES = 5
 MIN_CLASS_COUNT = 3
-MONITORED_FEATURES = ["cote_r", "log_revenu", "heures_travail", "premiere_generation"]
+MONITORED_FEATURES = SCORING_FEATURES
+CATEGORICAL_FEATURES = {"programme_etudes": PROGRAMMES, "premiere_generation_universitaire": (0, 1)}
+MONITOR_WORKERS = 4
 STATUS_ORDER = {"OK": 0, "WARN": 1, "ALERT": 2}
 
 
@@ -52,14 +55,15 @@ def share_gap(decisions, mask_a, mask_b):
     return abs(group_rate(decisions, mask_a) - group_rate(decisions, mask_b))
 
 
-def population_stability_index(expected, actual, bins=10):
+def categorical_psi(expected, actual, categories):
+    expected_share = np.array([(expected == c).mean() for c in categories]) + 1e-6
+    actual_share = np.array([(actual == c).mean() for c in categories]) + 1e-6
+    return float(np.sum((actual_share - expected_share) * np.log(actual_share / expected_share)))
+
+
+def histogram_psi(expected, actual, bins=10):
     if len(expected) == 0 or len(actual) == 0:
         return np.nan
-    categories = np.unique(np.concatenate([expected, actual]))
-    if len(categories) <= MAX_CATEGORIES:
-        expected_share = np.array([(expected == c).mean() for c in categories]) + 1e-6
-        actual_share = np.array([(actual == c).mean() for c in categories]) + 1e-6
-        return float(np.sum((actual_share - expected_share) * np.log(actual_share / expected_share)))
     edges = np.unique(np.quantile(expected, np.linspace(0, 1, bins + 1)))
     if len(edges) < 3:
         edges = np.array([-np.inf, np.median(expected), np.inf])
@@ -74,7 +78,7 @@ def proxy_auc(df):
     if min(remote.sum(), len(remote) - remote.sum()) < MIN_CLASS_COUNT:
         return np.nan
     model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
-    return cross_val_score(model, legitimate_features(df), remote, cv=3, scoring="roc_auc").mean()
+    return cross_val_score(model, scoring_features(df), remote, cv=3, scoring="roc_auc").mean()
 
 
 def eo_gap_check(name, decisions, y_ref, remote, detail, alert):
@@ -82,34 +86,46 @@ def eo_gap_check(name, decisions, y_ref, remote, detail, alert):
                   threshold=f"warn > {EO_GAP_WARN}, alert > {alert}", detail=detail, correctable=True)
 
 
-def run_checks(history: pd.DataFrame, batch: pd.DataFrame, decisions: np.ndarray,
-               reviewed: pd.Series | None = None, eo_gap_alert: float = EO_GAP_ALERT) -> list[Check]:
-    remote = is_remote(batch)
+def budget_check(decisions):
     share = decisions.mean()
     low, high = BUDGET_BOUNDS
-    checks = [Check("grant rate within budget", share, f"{low:.0%}-{high:.0%}",
-                    "OK" if low <= share <= high else "ALERT", f"{int(decisions.sum()):,} of {len(decisions):,}")]
+    return Check("grant rate within budget", share, f"{low:.0%}-{high:.0%}",
+                 "OK" if low <= share <= high else "ALERT", f"{int(decisions.sum()):,} of {len(decisions):,}")
 
+
+def parity_check(decisions, remote):
     centre_rate, remote_rate = group_rate(decisions, remote == 0), group_rate(decisions, remote == 1)
-    checks.append(graded("demographic parity gap (centre vs remote)", abs(centre_rate - remote_rate), DP_GAP_WARN,
-                         threshold=f"warn > {DP_GAP_WARN}", detail=f"centre {centre_rate:.1%}, remote {remote_rate:.1%}"))
+    return graded("demographic parity gap (centre vs remote)", abs(centre_rate - remote_rate), DP_GAP_WARN,
+                  threshold=f"warn > {DP_GAP_WARN}", detail=f"centre {centre_rate:.1%}, remote {remote_rate:.1%}")
 
+
+def impact_check(decisions, batch):
     region_rates = pd.Series(decisions).groupby(batch["region_administrative"].to_numpy()).mean()
-    checks.append(graded("impact ratio, lowest/highest region", region_rates.min() / region_rates.max(), IMPACT_RATIO_WARN,
-                         higher_is_worse=False, threshold=f"warn < {IMPACT_RATIO_WARN}",
-                         detail=f"{region_rates.idxmin()} {region_rates.min():.1%} vs {region_rates.idxmax()} {region_rates.max():.1%}"))
+    return graded("impact ratio, lowest/highest region", region_rates.min() / region_rates.max(), IMPACT_RATIO_WARN,
+                  higher_is_worse=False, threshold=f"warn < {IMPACT_RATIO_WARN}",
+                  detail=f"{region_rates.idxmin()} {region_rates.min():.1%} vs {region_rates.idxmax()} {region_rates.max():.1%}")
 
-    references = reference_labels(history, batch, share)
-    checks.append(eo_gap_check("opportunity gap vs merit reference", decisions, references["merit"], remote,
-                               "deserving = top R scores at the same budget", eo_gap_alert))
-    checks.append(eo_gap_check("opportunity gap vs corrected committee", decisions, references["corrected"], remote,
-                               "deserving = committee rule without regional penalty", eo_gap_alert))
-    if reviewed is not None:
-        known = reviewed.notna().to_numpy()
-        checks.append(eo_gap_check("opportunity gap vs human-reviewed sample", decisions[known],
-                                   reviewed[known].astype(int).to_numpy(), remote[known],
-                                   f"{known.sum():,} blind-reviewed applications", eo_gap_alert))
 
+def eo_merit_check(decisions, references, remote, eo_gap_alert):
+    return eo_gap_check("opportunity gap vs merit reference", decisions, references["merit"], remote,
+                        "deserving = top R scores at the same budget", eo_gap_alert)
+
+
+def eo_corrected_check(decisions, references, remote, eo_gap_alert):
+    return eo_gap_check("opportunity gap vs corrected committee", decisions, references["corrected"], remote,
+                        "deserving = committee rule without regional penalty", eo_gap_alert)
+
+
+def eo_reviewed_check(decisions, reviewed, remote, eo_gap_alert):
+    if reviewed is None:
+        return None
+    known = reviewed.notna().to_numpy()
+    return eo_gap_check("opportunity gap vs human-reviewed sample", decisions[known],
+                        reviewed[known].astype(int).to_numpy(), remote[known],
+                        f"{known.sum():,} blind-reviewed applications", eo_gap_alert)
+
+
+def intersection_check(decisions, batch, remote):
     first_gen = batch["premiere_generation_universitaire"].to_numpy() == 1
     income_tercile = pd.qcut(batch["revenu_familial_estime"], 3, labels=False, duplicates="drop").to_numpy()
     groups = {"first-generation": first_gen,
@@ -118,27 +134,91 @@ def run_checks(history: pd.DataFrame, batch: pd.DataFrame, decisions: np.ndarray
                          for name, members in groups.items()}
     computable = {name: gap for name, gap in intersection_gaps.items() if not np.isnan(gap)}
     worst_group = max(computable, key=computable.get, default=None)
-    checks.append(graded("largest intersectional gap (centre vs remote)", computable.get(worst_group, np.nan),
-                         INTERSECTION_GAP_WARN, threshold=f"warn > {INTERSECTION_GAP_WARN}",
-                         detail=worst_group or "no subgroup has both centre and remote applicants"))
+    return graded("largest intersectional gap (centre vs remote)", computable.get(worst_group, np.nan),
+                  INTERSECTION_GAP_WARN, threshold=f"warn > {INTERSECTION_GAP_WARN}",
+                  detail=worst_group or "no subgroup has both centre and remote applicants")
 
-    baseline_auc, batch_auc = proxy_auc(history), proxy_auc(batch)
-    checks.append(graded("proxy drift: region predictability (AUC change)", batch_auc - baseline_auc, PROXY_AUC_DRIFT_ALERT,
-                         PROXY_AUC_DRIFT_ALERT, threshold=f"alert > +{PROXY_AUC_DRIFT_ALERT}",
-                         detail=f"history {baseline_auc:.3f}, batch {batch_auc:.3f}"))
 
-    history_features, batch_features = legitimate_features(history), legitimate_features(batch)
-    history_remote = is_remote(history)
+def proxy_drift_check(history_auc, batch_auc):
+    return graded("proxy drift: region predictability (AUC change)", batch_auc - history_auc, PROXY_AUC_DRIFT_ALERT,
+                  PROXY_AUC_DRIFT_ALERT, threshold=f"alert > +{PROXY_AUC_DRIFT_ALERT}",
+                  detail=f"history {history_auc:.3f}, batch {batch_auc:.3f}")
+
+
+def feature_drift_check(history_features, batch_features, history_remote, remote):
     drift = {
-        f"{feature} ({group})": population_stability_index(history_features[feature][history_remote == flag],
-                                                           batch_features[feature][remote == flag])
+        f"{feature} ({group})": histogram_psi(history_features[feature][history_remote == flag],
+                                              batch_features[feature][remote == flag])
         for feature in MONITORED_FEATURES for group, flag in [("centre", 0), ("remote", 1)]
     }
     computable_drift = {name: value for name, value in drift.items() if not np.isnan(value)}
     worst_feature = max(computable_drift, key=computable_drift.get, default=None)
-    checks.append(graded("feature drift, max PSI", computable_drift.get(worst_feature, np.nan), PSI_WARN, PSI_ALERT,
-                         threshold=f"warn > {PSI_WARN}, alert > {PSI_ALERT}", detail=worst_feature or "no feature has both history and batch rows"))
-    return checks
+    return graded("feature drift, max PSI", computable_drift.get(worst_feature, np.nan), PSI_WARN, PSI_ALERT,
+                  threshold=f"warn > {PSI_WARN}, alert > {PSI_ALERT}", detail=worst_feature or "no feature has both history and batch rows")
+
+
+def categorical_drift_check(history, batch):
+    history_regions, batch_regions = history["region_administrative"].to_numpy(), batch["region_administrative"].to_numpy()
+    worst = None
+    for region in REGIONS:
+        for column, categories in CATEGORICAL_FEATURES.items():
+            expected, actual = history[column][history_regions == region], batch[column][batch_regions == region]
+            if len(expected) == 0 or len(actual) == 0:
+                continue
+            value = categorical_psi(expected, actual, categories)
+            if worst is None or value > worst[0]:
+                worst = (value, column, region, expected, actual, categories)
+    if worst is None:
+        return graded("categorical drift, max PSI", np.nan, PSI_WARN, PSI_ALERT,
+                      threshold=f"warn > {PSI_WARN}, alert > {PSI_ALERT}",
+                      detail="no region has both history and batch rows")
+    value, column, region, expected, actual, categories = worst
+    shifts = {category: 100 * ((actual == category).mean() - (expected == category).mean()) for category in categories}
+    category = max(shifts, key=lambda c: abs(shifts[c]))
+    return graded("categorical drift, max PSI", value, PSI_WARN, PSI_ALERT,
+                  threshold=f"warn > {PSI_WARN}, alert > {PSI_ALERT}",
+                  detail=f"{column} ({region}), largest shift {category} {shifts[category]:+.2f} points")
+
+
+def collect(*values):
+    return [value for value in values if isinstance(value, Check)]
+
+
+CHECK_NODES = (
+    Node("remote", is_remote, ("batch",)),
+    Node("history_remote", is_remote, ("history",)),
+    Node("share", lambda decisions: decisions.mean(), ("decisions",)),
+    Node("references", reference_labels, ("history", "batch", "share")),
+    Node("history_auc", proxy_auc, ("history",)),
+    Node("batch_auc", proxy_auc, ("batch",)),
+    Node("history_features", scoring_features, ("history",)),
+    Node("batch_features", scoring_features, ("batch",)),
+    Node("budget", budget_check, ("decisions",)),
+    Node("parity", parity_check, ("decisions", "remote")),
+    Node("impact", impact_check, ("decisions", "batch")),
+    Node("eo_merit", eo_merit_check, ("decisions", "references", "remote", "eo_gap_alert")),
+    Node("eo_corrected", eo_corrected_check, ("decisions", "references", "remote", "eo_gap_alert")),
+    Node("eo_reviewed", eo_reviewed_check, ("decisions", "reviewed", "remote", "eo_gap_alert")),
+    Node("intersection", intersection_check, ("decisions", "batch", "remote")),
+    Node("proxy_drift", proxy_drift_check, ("history_auc", "batch_auc")),
+    Node("feature_drift", feature_drift_check, ("history_features", "batch_features", "history_remote", "remote")),
+    Node("categorical_drift", categorical_drift_check, ("history", "batch")),
+)
+
+
+def monitoring_graph(nodes=CHECK_NODES) -> Graph:
+    return Graph(nodes).add(Node("checks", collect, tuple(node.name for node in nodes)))
+
+
+MONITORING = monitoring_graph()
+
+
+def run_checks(history: pd.DataFrame, batch: pd.DataFrame, decisions: np.ndarray,
+               reviewed: pd.Series | None = None, eo_gap_alert: float = EO_GAP_ALERT, *,
+               graph: Graph = MONITORING, workers: int = MONITOR_WORKERS) -> list[Check]:
+    seeds = {"history": history, "batch": batch, "decisions": decisions, "reviewed": reviewed,
+             "eo_gap_alert": eo_gap_alert}
+    return graph.run(seeds, targets=["checks"], workers=workers)["checks"]
 
 
 def overall_status(checks: list[Check]) -> str:

@@ -5,22 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-PROGRAMMES = ["Arts et lettres", "Genie", "Sante", "Sciences", "Sciences sociales"]
 BUDGET_BOUNDS = (0.36, 0.44)
-
-
-def legitimate_features(df):
-    X = pd.DataFrame(
-        {
-            "cote_r": df["cote_r_equivalent"],
-            "log_revenu": np.log(df["revenu_familial_estime"]),
-            "heures_travail": df["heures_travail_semaine"],
-            "premiere_generation": df["premiere_generation_universitaire"],
-        }
-    )
-    for programme in PROGRAMMES[1:]:
-        X[f"prog_{programme}"] = (df["programme_etudes"] == programme).astype(float)
-    return X
 
 
 def production_features(train_df, target_df):

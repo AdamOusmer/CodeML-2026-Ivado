@@ -13,9 +13,9 @@ from src.policy import (
     FairPipeline,
     allocate,
     is_remote,
-    legitimate_features,
     logistic_regression,
     production_features,
+    scoring_features,
 )
 
 from .core import Candidate, run, summarize
@@ -51,24 +51,24 @@ def production_at_budget(train, test, share):
 
 
 def drop_proxies(train, test, share):
-    model = logistic_regression().fit(legitimate_features(train), labels(train))
-    return allocate(model.predict_proba(legitimate_features(test))[:, 1], share)
+    model = logistic_regression().fit(scoring_features(train), labels(train))
+    return allocate(model.predict_proba(scoring_features(test))[:, 1], share)
 
 
 def threshold_optimizer(train, test, share):
-    model = logistic_regression().fit(legitimate_features(train), labels(train))
-    optimizer = ThresholdOptimizer(estimator=model, constraints="true_positive_rate_parity",
+    model = logistic_regression().fit(scoring_features(train), labels(train))
+    optimizer =ThresholdOptimizer(estimator=model, constraints="true_positive_rate_parity",
                                    objective="balanced_accuracy_score", prefit=True, predict_method="predict_proba")
-    optimizer.fit(legitimate_features(train), labels(train), sensitive_features=is_remote(train))
-    return optimizer.predict(legitimate_features(test), sensitive_features=is_remote(test), random_state=SEED)
+    optimizer.fit(scoring_features(train), labels(train), sensitive_features=is_remote(train))
+    return optimizer.predict(scoring_features(test), sensitive_features=is_remote(test), random_state=SEED)
 
 
 def expgrad(bound):
     def decide(train, test, share):
         model = ExponentiatedGradient(logistic_regression(), constraints=TruePositiveRateParity(difference_bound=bound),
                                       sample_weight_name="logisticregression__sample_weight")
-        model.fit(legitimate_features(train), labels(train), sensitive_features=is_remote(train))
-        return allocate(model._pmf_predict(legitimate_features(test))[:, 1], share)
+        model.fit(scoring_features(train), labels(train), sensitive_features=is_remote(train))
+        return allocate(model._pmf_predict(scoring_features(test))[:, 1], share)
     return decide
 
 

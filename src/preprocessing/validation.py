@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import math
 import re
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -10,26 +9,10 @@ from pathlib import Path
 from typing import Iterator
 
 from src.common.logging import RunContext
-from src.policy import REGIONS
-
-FEATURE_COLUMNS = (
-    "id_candidat", "cote_r_equivalent", "programme_etudes", "region_administrative",
-    "code_postal_3", "revenu_familial_estime", "heures_travail_semaine",
-    "distance_domicile_campus_km", "premiere_generation_universitaire",
+from .rules import (
+    CATEGORIES, ID_PATTERN, LABEL_COLUMN, MAX_REPORTED_ISSUES, NUMERIC_BOUNDS, POSTAL_PATTERN,
+    Bound, DataValidationError, binary_columns, required_columns,
 )
-LABEL_COLUMN = "decision_octroi"
-PROGRAMS = {"Genie", "Arts et lettres", "Sciences", "Sante", "Sciences sociales"}
-NUMERIC_RANGES = {
-    "cote_r_equivalent": (15, 40),
-    "revenu_familial_estime": (0, None),
-    "heures_travail_semaine": (0, 168),
-    "distance_domicile_campus_km": (0, None),
-}
-MAX_REPORTED_ISSUES = 8
-
-
-class DataValidationError(ValueError):
-    pass
 
 
 @dataclass
@@ -49,7 +32,7 @@ class DatasetReport:
 def _check_header(path: Path, header: list[str], labeled: bool) -> None:
     if len(set(header)) != len(header):
         raise DataValidationError(f"{path.name}: duplicate column names")
-    expected = set(FEATURE_COLUMNS) | ({LABEL_COLUMN} if labeled else set())
+    expected = required_columns(labeled)
     missing, extra = expected - set(header), set(header) - expected
     details = []
     if missing:
@@ -60,12 +43,11 @@ def _check_header(path: Path, header: list[str], labeled: bool) -> None:
         raise DataValidationError(f"{path.name}: {'; '.join(details)}")
 
 
-def _in_range(text: str, minimum: float, maximum: float | None) -> bool:
+def _in_bound(text: str, bound: Bound) -> bool:
     try:
-        value = float(text)
+        return bool(bound.accepts(float(text)))
     except ValueError:
         return False
-    return math.isfinite(value) and value >= minimum and (maximum is None or value <= maximum)
 
 
 def _row_issues(row: dict, header: list[str], labeled: bool, seen_ids: set[str]) -> Iterator[str]:
@@ -78,26 +60,24 @@ def _row_issues(row: dict, header: list[str], labeled: bool, seen_ids: set[str])
 
     candidate_id = row["id_candidat"]
     if "id_candidat" not in empty:
-        if re.fullmatch(r"C\d{6}", candidate_id) is None:
+        if re.fullmatch(ID_PATTERN, candidate_id) is None:
             yield "id_candidat must match C000000"
         if candidate_id in seen_ids:
             yield "duplicate id_candidat"
         seen_ids.add(candidate_id)
 
-    for key, (minimum, maximum) in NUMERIC_RANGES.items():
-        if key not in empty and not _in_range(row[key], minimum, maximum):
-            bounds = f">= {minimum}" if maximum is None else f"{minimum} to {maximum}"
-            yield f"{key} must be a finite number ({bounds})"
+    for key, bound in NUMERIC_BOUNDS.items():
+        if key not in empty and not _in_bound(row[key], bound):
+            yield f"{key} must be a finite number ({bound.describe()})"
 
-    for key, allowed in (("programme_etudes", PROGRAMS), ("region_administrative", set(REGIONS))):
+    for key, allowed in CATEGORIES.items():
         if key not in empty and row[key] not in allowed:
             yield f"unknown {key}"
 
-    if "code_postal_3" not in empty and re.fullmatch(r"[A-Z]\d[A-Z]", row["code_postal_3"]) is None:
+    if "code_postal_3" not in empty and re.fullmatch(POSTAL_PATTERN, row["code_postal_3"]) is None:
         yield "code_postal_3 must match A1A"
 
-    binary_columns = ("premiere_generation_universitaire", LABEL_COLUMN) if labeled else ("premiere_generation_universitaire",)
-    for key in binary_columns:
+    for key in binary_columns(labeled):
         if key not in empty and row[key] not in {"0", "1"}:
             yield f"{key} must be 0 or 1"
 

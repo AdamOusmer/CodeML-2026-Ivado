@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
@@ -25,7 +24,8 @@ def pareto_mask(summary: pd.DataFrame, x: str, y: str) -> np.ndarray:
 
 
 def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], splits: int) -> Figure:
-    fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 5), squeeze=False)
+    fig = Figure(figsize=(6.5 * len(panels), 5))
+    axes = fig.subplots(1, len(panels), squeeze=False)
     curves = [family for family in summary["family"].unique() if family not in POINT_STYLES]
     for ax, (x, y) in zip(axes[0], panels):
         for family, style in zip(curves, CURVE_STYLES):

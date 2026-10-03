@@ -5,6 +5,7 @@ os.environ["OMP_NUM_THREADS"] = "2"
 import ast
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -39,11 +40,12 @@ THIRD_PARTY_OK = {
     "common": {"rich"},
 }
 MAY_IMPORT = {
-    "main": {"adapters", "harness", "evaluation", "monitoring", "preprocessing", "policy", "common"},
-    "model_corrige": {"adapters", "harness", "evaluation", "monitoring", "preprocessing", "policy", "common"},
+    "main": {"adapters", "harness", "evaluation", "monitoring", "preprocessing", "pipelines", "policy", "common"},
+    "model_corrige": {"adapters", "harness", "evaluation", "monitoring", "preprocessing", "pipelines", "policy", "common"},
     "adapters": {"harness", "common"},
     "harness": {"monitoring", "explain", "policy", "common"},
-    "monitoring": {"policy"},
+    "monitoring": {"policy", "common"},
+    "pipelines": {"adapters", "harness", "evaluation", "preprocessing", "policy", "common"},
     "explain": {"policy"},
     "evaluation": {"policy"},
     "preprocessing": {"policy", "common"},
@@ -124,6 +126,7 @@ def check_baseline(ctx) -> str:
     assert record.status == "published", f"status {record.status}"
     assert len(record.decisions) == 4000, f"rows {len(record.decisions)}"
     assert grants == round(share * 4000), f"grants {grants} != round(share*n)"
+    assert grants == 1598, f"grants {grants} != 1598"
     assert "ADJUST_OFFSET" not in action_kinds(record), f"actions {action_kinds(record)}"
     out = ctx["tmp"] / "baseline"
     write_decision(record, out)
@@ -160,7 +163,7 @@ def check_duplicate_id(ctx) -> str:
     lines = [line for line in result.stderr.splitlines() if line.strip()]
     assert result.returncode == 1, f"exit {result.returncode}, stderr tail {lines[-1:]}"
     assert "Traceback" not in result.stderr, "traceback in stderr"
-    assert "duplicated id_candidat" in result.stderr, f"stderr tail {lines[-1:]}"
+    assert re.search(r"duplicated? id_candidat", result.stderr), f"stderr tail {lines[-1:]}"
     assert not out.exists() or not any(out.iterdir()), f"files written: {sorted(p.name for p in out.iterdir())}"
     return f"exit=1 stderr={lines[-1][:90]!r}" if lines else "exit=1"
 
@@ -190,7 +193,7 @@ def alert_checks(summary: dict) -> list[dict]:
 
 def check_drift_block(ctx) -> str:
     batch = ctx["batch"].copy()
-    batch["cote_r_equivalent"] = batch["cote_r_equivalent"] + 3
+    batch["cote_r_equivalent"] = (batch["cote_r_equivalent"] + 3).clip(upper=40)
     batch_path = ctx["tmp"] / "batch_drift.csv"
     batch.to_csv(batch_path, index=False)
     out = make_sentinel_dir(ctx["tmp"], "drift")
@@ -217,9 +220,9 @@ def check_categorical_drift(ctx) -> str:
     summary = load_strict(out / "decision_record.json")
     kinds = [action["kind"] for action in summary["actions"]]
     assert "ADJUST_OFFSET" not in kinds, f"actions {kinds}"
-    drift = [check for check in alert_checks(summary) if check["name"] == "feature drift, max PSI"]
+    drift = [check for check in alert_checks(summary) if check["name"] == "categorical drift, max PSI"]
     assert drift and not any(check["correctable"] for check in drift), f"drift alerts {drift}"
-    assert "feature drift, max PSI" in block_action(summary)["params"]["checks"], "BLOCK lacks drift check"
+    assert "categorical drift, max PSI" in block_action(summary)["params"]["checks"], "BLOCK lacks drift check"
     return f"exit=3 PSI={drift[0]['value']:.2f} actions={kinds}"
 
 
@@ -487,7 +490,7 @@ def check_boundary_proof(ctx) -> str:
 
 def check_explain_identity(ctx) -> str:
     from src.explain import explain
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share, legitimate_features
+    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share, scoring_features
 
     history, batch = ctx["history"], ctx["batch"]
     pipeline = FairPipeline(DECLARED_CONFIG, budget_share(history)).fit(history)
@@ -495,7 +498,7 @@ def check_explain_identity(ctx) -> str:
     model = pipeline.main_model_
     intercept = float(model[-1].intercept_[0])
     reconstructed = contributions.to_numpy().sum(axis=1) + intercept
-    expected = model.decision_function(legitimate_features(batch))
+    expected = model.decision_function(scoring_features(batch))
     error = float(np.max(np.abs(reconstructed - expected)))
     assert error < 1e-9, f"max abs err {error:.3g}"
     decisions = pipeline.predict(batch)
@@ -503,6 +506,226 @@ def check_explain_identity(ctx) -> str:
     needed = {"id_candidat", "decision", "score", "merit_vote", "model_vote", "offset", "factor_1", "factor_2", "factor_3"}
     assert needed <= set(table.columns), f"missing columns {needed - set(table.columns)}"
     return f"max abs err {error:.2e}"
+
+
+def check_frame_rejects(ctx) -> str:
+    from src.preprocessing import DataValidationError, validate_frames
+
+    history, batch = ctx["history"], ctx["batch"]
+
+    def zero_income(frame):
+        frame.loc[frame.index[0], "revenu_familial_estime"] = 0
+
+    def unknown_programme(frame):
+        frame.loc[frame.index[0], "programme_etudes"] = "Droit"
+
+    def unknown_region(frame):
+        frame.loc[frame.index[0], "region_administrative"] = "Laval"
+
+    def nan_cote(frame):
+        frame.loc[frame.index[0], "cote_r_equivalent"] = np.nan
+
+    def inf_hours(frame):
+        frame["heures_travail_semaine"] = frame["heures_travail_semaine"].astype(float)
+        frame.loc[frame.index[0], "heures_travail_semaine"] = np.inf
+
+    def duplicate_id(frame):
+        frame.loc[frame.index[1], "id_candidat"] = frame.loc[frame.index[0], "id_candidat"]
+
+    def overlapping_id(frame):
+        frame.loc[frame.index[0], "id_candidat"] = history["id_candidat"].iloc[0]
+
+    def nan_id(frame):
+        frame["id_candidat"] = frame["id_candidat"].astype(object)
+        frame.loc[frame.index[0], "id_candidat"] = np.nan
+
+    def nan_postal(frame):
+        frame["code_postal_3"] = frame["code_postal_3"].astype(object)
+        frame.loc[frame.index[0], "code_postal_3"] = np.nan
+
+    def unicode_digit_id(frame):
+        frame["id_candidat"] = frame["id_candidat"].astype(object)
+        frame.loc[frame.index[0], "id_candidat"] = "C١٢٣٤٥٦"
+
+    mutations = [
+        zero_income,
+        unknown_programme,
+        unknown_region,
+        nan_cote,
+        inf_hours,
+        duplicate_id,
+        overlapping_id,
+        nan_id,
+        nan_postal,
+        unicode_digit_id,
+    ]
+    for mutate in mutations:
+        mutated = batch.copy()
+        mutate(mutated)
+        try:
+            validate_frames(history, mutated)
+        except DataValidationError:
+            continue
+        raise AssertionError(f"{mutate.__name__} not rejected")
+    frame_report = validate_frames(history, batch)
+    warnings = list(frame_report.warnings)
+    assert len(warnings) >= 2, f"{len(warnings)} warnings: {warnings}"
+    joined = " | ".join(str(warning) for warning in warnings)
+    for column in ("cote_r_equivalent", "revenu_familial_estime"):
+        assert column in joined, f"no warning mentions {column}: {joined[:200]}"
+    return f"{len(mutations)} mutations rejected; real frames pass with {len(warnings)} warnings"
+
+
+def check_csv_income_zero(ctx) -> str:
+    from src.preprocessing.validation import DataValidationError, validate_csv
+
+    batch = ctx["batch"].copy()
+    batch.loc[batch.index[0], "revenu_familial_estime"] = 0
+    path = ctx["tmp"] / "batch_income_zero.csv"
+    batch.to_csv(path, index=False)
+    try:
+        validate_csv(path, False, None)
+    except DataValidationError as error:
+        assert "revenu_familial_estime" in str(error), f"message lacks column: {str(error)[:200]}"
+        return "income 0 rejected naming revenu_familial_estime"
+    raise AssertionError("income 0 accepted by validate_csv")
+
+
+def check_region_invariance(ctx) -> str:
+    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+
+    history, batch = ctx["history"], ctx["batch"]
+    pipeline = FairPipeline(DECLARED_CONFIG, budget_share(history)).fit(history)
+    columns = ["region_administrative", "code_postal_3", "distance_domicile_campus_km"]
+    order = np.random.default_rng(7).permutation(len(batch))
+    shuffled = batch.copy()
+    shuffled[columns] = batch[columns].to_numpy()[order]
+    assert not shuffled[columns].equals(batch[columns]), "permutation left columns unchanged"
+    assert np.array_equal(pipeline.score(batch, offset=0), pipeline.score(shuffled, offset=0)), "scores differ (I2)"
+    return "scores identical after joint shuffle of region, postal, distance"
+
+
+def check_schemas(ctx) -> str:
+    from src.policy import COMMITTEE_FEATURES, SCORING_FEATURES, committee_features, scoring_features
+
+    history, batch = ctx["history"], ctx["batch"]
+    assert list(scoring_features(batch).columns) == SCORING_FEATURES == ["cote_r", "log_revenu", "heures_travail"], "scoring order"
+    for name, frame in (("history", history), ("batch", batch)):
+        committee, scoring = committee_features(frame), scoring_features(frame)
+        assert committee.shape[1] == 8 and list(committee.columns) == COMMITTEE_FEATURES, f"{name} committee columns"
+        assert scoring.shape[1] == 3 and list(scoring.columns) == SCORING_FEATURES, f"{name} scoring columns"
+    feature_history = [c for c in history.columns if c != "decision_octroi"]
+    assert list(batch.columns) == feature_history, "history/batch columns differ"
+    assert list(committee_features(history).columns) == list(committee_features(batch).columns), "committee misaligned"
+    return f"committee={len(COMMITTEE_FEATURES)} scoring={SCORING_FEATURES}"
+
+
+def check_categorical_drift_ok(ctx) -> str:
+    from src.monitoring import run_checks
+
+    record = ctx["baseline_decide"]()
+    checks = run_checks(ctx["history"], ctx["batch"], record.decisions)
+    found = [c for c in checks if c.name == "categorical drift, max PSI"]
+    assert len(found) == 1, f"{len(found)} categorical drift checks"
+    check = found[0]
+    assert check.status == "OK", f"status {check.status}"
+    assert abs(check.value - 0.0383) < 0.001, f"value {check.value:.4f}"
+    assert "Gaspesie" in check.detail and "Genie +7.98" in check.detail, f"detail {check.detail!r}"
+    return f"psi={check.value:.4f} status=OK detail={check.detail[:80]!r}"
+
+
+def check_monitoring_concurrency(ctx) -> str:
+    from src.monitoring import run_checks
+
+    record = ctx["baseline_decide"]()
+    serial = run_checks(ctx["history"], ctx["batch"], record.decisions, workers=1)
+    parallel = run_checks(ctx["history"], ctx["batch"], record.decisions, workers=4)
+    left = json.dumps([c.to_dict() for c in serial], sort_keys=True)
+    right = json.dumps([c.to_dict() for c in parallel], sort_keys=True)
+    assert left == right, "workers=1 and workers=4 results differ"
+    return f"{len(serial)} checks identical for workers 1 and 4"
+
+
+def check_graph_runtime(ctx) -> str:
+    from src.common.graph import Graph, GraphError, Node
+
+    def slow(value):
+        time.sleep(0.3)
+        return value + 1
+
+    diamond = Graph([
+        Node("top", lambda x: x * 2, ("x",)),
+        Node("left", slow, ("top",)),
+        Node("right", slow, ("top",)),
+        Node("join", lambda a, b: a + b, ("left", "right")),
+    ])
+    serial = diamond.run({"x": 1}, workers=1)
+    started = time.time()
+    parallel = diamond.run({"x": 1}, workers=2)
+    elapsed = time.time() - started
+    assert elapsed < 0.5, f"workers=2 took {elapsed:.2f}s"
+    assert serial == parallel, "workers=1 and workers=2 results differ"
+    assert parallel["join"] == 6, f"join {parallel['join']}"
+    try:
+        Graph([Node("a", lambda b: b, ("b",)), Node("b", lambda a: a, ("a",))])
+    except GraphError:
+        pass
+    else:
+        raise AssertionError("cycle accepted")
+    try:
+        diamond.run({})
+    except GraphError:
+        pass
+    else:
+        raise AssertionError("missing seed accepted")
+    assert diamond.order() == diamond.order() == list(diamond.order()), "order unstable"
+    assert [n for n in diamond.order()] == [n for n in Graph(diamond.nodes).order()], "order differs across instances"
+
+    class Boom(KeyError):
+        pass
+
+    failing = Graph([Node("bad", lambda x: (_ for _ in ()).throw(Boom("boom")), ("x",))])
+    for workers in (1, 2):
+        try:
+            failing.run({"x": 1}, workers=workers)
+        except Boom:
+            pass
+        except Exception as error:
+            raise AssertionError(f"workers={workers} raised {type(error).__name__}")
+        else:
+            raise AssertionError("failing node did not raise")
+    return f"diamond workers=2 {elapsed:.2f}s; cycle, missing seed, order, exception type ok"
+
+
+def check_cli_invalid_batch(ctx) -> str:
+    batch = ctx["batch"].copy()
+    batch.loc[batch.index[0], "revenu_familial_estime"] = 0
+    batch_path = ctx["tmp"] / "batch_income_zero_cli.csv"
+    batch.to_csv(batch_path, index=False)
+    out = make_sentinel_dir(ctx["tmp"], "invalid_batch")
+    result = run_decide_cli(HISTORY_PATH, batch_path, out)
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert result.returncode == 1, f"exit {result.returncode}, stderr tail {lines[-1:]}"
+    assert "Traceback" not in result.stderr, "traceback in stderr"
+    assert (out / "predictions.csv").read_bytes() == SENTINEL, "sentinel predictions.csv changed"
+    written = [name for name in OUTPUT_NAMES[1:] if (out / name).exists()]
+    assert not written, f"outputs written: {written}"
+    return f"exit=1 nothing written stderr={lines[-1][:80]!r}" if lines else "exit=1 nothing written"
+
+
+def check_extra_fields(ctx) -> str:
+    lines = ctx["batch"].to_csv(index=False).splitlines(keepends=True)
+    lines[1] = "X," + lines[1]
+    batch_path = ctx["tmp"] / "batch_extra_field.csv"
+    batch_path.write_text("".join(lines))
+    out = ctx["tmp"] / "extra_field"
+    result = run_decide_cli(HISTORY_PATH, batch_path, out)
+    stderr_lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert result.returncode == 1, f"exit {result.returncode}, stderr tail {stderr_lines[-1:]}"
+    assert "Traceback" not in result.stderr, "traceback in stderr"
+    written = sorted(path.name for path in out.iterdir()) if out.exists() else []
+    assert not written, f"outputs written: {written}"
+    return f"exit=1 nothing written stderr={stderr_lines[-1][:80]!r}" if stderr_lines else "exit=1 nothing written"
 
 
 def run_check(name: str, function, *args) -> None:
@@ -564,6 +787,15 @@ def main() -> int:
     run_check("replay", check_replay, ctx)
     run_check("region_blindness", check_region_blindness, ctx)
     run_check("tuner_not_live", check_tuner_not_live, ctx)
+    run_check("frame_rejects", check_frame_rejects, ctx)
+    run_check("csv_income_zero", check_csv_income_zero, ctx)
+    run_check("region_invariance", check_region_invariance, ctx)
+    run_check("schemas", check_schemas, ctx)
+    run_check("categorical_drift_ok", check_categorical_drift_ok, ctx)
+    run_check("monitoring_concurrency", check_monitoring_concurrency, ctx)
+    run_check("graph_runtime", check_graph_runtime, ctx)
+    run_check("cli_invalid_batch", check_cli_invalid_batch, ctx)
+    run_check("extra_fields", check_extra_fields, ctx)
     run_boundary_checks(ctx)
     run_check("explain_identity", check_explain_identity, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]

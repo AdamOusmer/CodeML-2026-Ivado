@@ -5,8 +5,9 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from .core import allocate, legitimate_features, logistic_regression, percentile
+from .core import allocate, logistic_regression, percentile
 from .regions import is_remote
+from .schema import committee_features, scoring_features
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ DECLARED_CONFIG = Config("jury 50/50")
 
 class CommitteeModel:
     def fit(self, df, y):
-        X = legitimate_features(df)
+        X = committee_features(df)
         self.scaler_ = StandardScaler().fit(X)
         Z = np.column_stack([self.scaler_.transform(X), is_remote(df)])
         self.lr_ = LogisticRegression(max_iter=3000).fit(Z, y)
@@ -29,7 +30,7 @@ class CommitteeModel:
         return self
 
     def corrected_logit(self, df, removal=1.0):
-        Z = self.scaler_.transform(legitimate_features(df))
+        Z = self.scaler_.transform(committee_features(df))
         base = Z @ self.lr_.coef_[0][:-1] + self.lr_.intercept_[0]
         return base + (1.0 - removal) * self.remote_penalty_ * is_remote(df)
 
@@ -42,11 +43,11 @@ class FairPipeline:
     def fit(self, history):
         self.committee_ = CommitteeModel().fit(history, history["decision_octroi"].to_numpy())
         corrected = allocate(self.committee_.corrected_logit(history, self.config.removal), self.share)
-        self.main_model_ = logistic_regression().fit(legitimate_features(history), corrected)
+        self.main_model_ = logistic_regression().fit(scoring_features(history), corrected)
         return self
 
     def model_probability(self, df):
-        return self.main_model_.predict_proba(legitimate_features(df))[:, 1]
+        return self.main_model_.predict_proba(scoring_features(df))[:, 1]
 
     def jury_score(self, df):
         votes = {
@@ -64,7 +65,7 @@ class FairPipeline:
 
     def contributions(self, df):
         scaler, lr = self.main_model_[0], self.main_model_[-1]
-        features = legitimate_features(df)
+        features = scoring_features(df)
         return pd.DataFrame(scaler.transform(features) * lr.coef_[0], columns=features.columns, index=df.index)
 
 

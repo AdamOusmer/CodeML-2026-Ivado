@@ -180,13 +180,12 @@ def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
 
 
 def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    from src.adapters import json_text, read_inputs, write_decision
-    from src.harness import decide
+    from src.adapters import json_text
+    from src.pipelines import run_decision
 
     with run.stage("Deciding"):
-        inputs = read_inputs(args.history, args.batch)
-        record = decide(inputs.history, inputs.batch, inputs.hashes)
-        written = write_decision(record, args.out_dir)
+        artifacts = run_decision(args.history, args.batch, args.out_dir)
+    record, written = artifacts["record"], artifacts["written"]
     if args.json:
         print(json_text(record.summary()))
     elif not quiet:

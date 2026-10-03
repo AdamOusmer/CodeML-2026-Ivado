@@ -3,7 +3,9 @@ from importlib import import_module
 _EXPORTS = {
     "regions": ("REGIONS", "REMOTE_REGIONS", "is_remote"),
     "core": ("BUDGET_BOUNDS", "budget_share", "allocate", "percentile", "logistic_regression", "eo_gap",
-             "legitimate_features", "production_features"),
+             "production_features"),
+    "schema": ("PROGRAMMES", "COMMITTEE_FEATURES", "SCORING_FEATURES", "feature_frame", "committee_features",
+               "scoring_features"),
     "models": ("Config", "DECLARED_CONFIG", "CommitteeModel", "FairPipeline", "reference_labels"),
 }
 _MODULE_OF = {name: module for module, names in _EXPORTS.items() for name in names}

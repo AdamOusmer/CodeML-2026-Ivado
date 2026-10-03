@@ -13,7 +13,7 @@ from .record import Action, ActionKind, DecisionRecord, InputError
 OFFSET_GRID = np.linspace(-0.10, 0.10, 41).round(3)
 NO_OFFSET_REASON = "no offset in the allowed grid lowers the gap"
 MERIT_ONLY_SUGGESTION = "review data drift, then consider a merit-only policy"
-JURY_REASONS = ("near_cutoff", "low_confidence", "disagreement")
+JURY_REASONS = ("near_cutoff", "disagreement")
 
 logger = get_logger("harness")
 

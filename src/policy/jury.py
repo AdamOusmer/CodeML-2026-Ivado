@@ -6,7 +6,6 @@ import numpy as np
 @dataclass(frozen=True)
 class JurySettings:
     band: float = 0.025
-    conf: float = 0.15
     disagree: float = 0.30
     quorum: float = 1.0
     jurors: tuple[str, ...] = ("merit", "programme_merit")
@@ -75,12 +74,11 @@ def validate(main_probability, juror_scores, k, settings, ranking=None) -> JuryO
     votes = dict(zip(settings.jurors, juror_votes))
 
     near_cutoff = np.abs(rank - (k - 0.5)) <= settings.band * n
-    low_confidence = (0.5 - settings.conf < main_probability) & (main_probability < 0.5 + settings.conf)
     disagreement = np.zeros(n, dtype=bool)
     if settings.jurors:
         disagreement = np.max(np.abs(juror_percentiles - main_percentile), axis=0) > settings.disagree
-    triggered = near_cutoff | low_confidence | disagreement
-    triggers = (("near_cutoff", near_cutoff), ("low_confidence", low_confidence), ("disagreement", disagreement))
+    triggered = near_cutoff | disagreement
+    triggers = (("near_cutoff", near_cutoff), ("disagreement", disagreement))
     reasons = tuple(tuple(name for name, mask in triggers if mask[index]) for index in range(n))
 
     overturned = np.zeros(n, dtype=bool)

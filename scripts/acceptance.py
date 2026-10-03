@@ -526,7 +526,7 @@ def jury_variants() -> dict:
     return {
         "default": default,
         "band0": replace(default, band=0.0),
-        "zero_triggers": replace(default, band=0.0, conf=0.0, disagree=1.0),
+        "zero_triggers": replace(default, band=0.0, disagree=1.0),
         "quorum_half": replace(default, quorum=0.5),
         "merit_only": replace(default, jurors=("merit",)),
     }

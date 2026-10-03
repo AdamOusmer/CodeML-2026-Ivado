@@ -29,7 +29,7 @@ Non-goals
 Budget rule: `share = history["decision_octroi"].mean()` (39.94 % on supplied data, 10,000 rows;
 1,598 grants on 4,000 candidates). MUST be read from data via `policy.core.budget_share`, never hardcoded.
 MUST lie in `BUDGET_BOUNDS = (0.36, 0.44)`, else `ValueError`.
-DIVERGENCE: `ValueError` is not in the handled list of `src/main.py:main`; it hits the generic handler, exit 1.
+`decide` raises `ValueError` on a budget outside the bounds or on missing/duplicate `id_candidat`; the CLI reports it in one line, exit 1, no files.
 
 ## 3. Module layout and ownership
 | Path | Owns |
@@ -105,14 +105,14 @@ Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forb
 DIVERGENCE (I3): bound is enforced only by `OFFSET_GRID = linspace(-0.10, 0.10, 41)` (`controller.py:14`).
 `FairPipeline.score/predict` accept any offset (`models.py:58`). Callers other than `fit_offset` can exceed it.
 
-DIVERGENCE (I5): blocked run still writes `decision_record.json` and `explanations.csv` (`record.py:66-67`).
-Only `predictions.csv` is withheld; a stale one from a prior run stays on disk by design.
+I5 in practice: `src.adapters.write_decision` always writes `decision_record.json` and `explanations.csv` (the
+audit trail of a blocked run) and writes `predictions.csv` only when published; an earlier file stays byte-identical.
 
 ## 6. Actions and flow
 | Kind | Params (as coded) | When |
 |---|---|---|
 | `SELECT_CONFIG` | `{config: name}` | once, first (`controller.py:44`) |
-| `ADJUST_OFFSET` | `{offset, moved: count, alerts: [check names]}` | first verdict ALERT and every ALERT check is `correctable` |
+| `ADJUST_OFFSET` | `{offset, moved: count, alerts: [check names]}` | first verdict ALERT, every ALERT check `correctable`, and `fit_offset` != 0 |
 | `BLOCK` | `{checks, suggestion}` | final verdict ALERT |
 
 ```
@@ -125,10 +125,13 @@ FIT -> DECIDE(offset 0) -> AUDIT --OK/WARN--> PUBLISH
 - Moved ids go in `record.moved_ids`; gaps before/after are readable from `verdicts[0]` vs `verdicts[1]`.
 - DIVERGENCE: `SELECT_CONFIG` carries no Pareto evidence; `ADJUST_OFFSET.params` has `moved` count and `alerts`,
   not gaps or ids (`controller.py:44,55-56`). Earlier spec listed evidence, gaps, ids.
-- If `fit_offset` returns 0, `ADJUST_OFFSET` is still recorded; second audit is identical and blocks.
+- If `fit_offset` returns 0, no `ADJUST_OFFSET` is recorded; the run goes straight to BLOCK with reason
+  "no offset in the allowed grid lowers the gap".
+- A check whose metric cannot be computed (NaN, empty subgroup, single class) is a non-correctable ALERT, so it blocks.
 
-Corrector (`fit_offset`): over `OFFSET_GRID` (41 points, [-0.10, 0.10]) pick the offset minimizing the mean
-`eo_gap` vs `corrected` and `merit` references on the batch; ties on `round(gap, 3)` break to smaller abs(offset).
+Corrector (`fit_offset`): over `OFFSET_GRID` (41 points, [-0.10, 0.10]) pick the offset minimizing the larger
+of the `eo_gap` vs `corrected` and vs `merit` (alerts fire on each gap); key `(round(max gap, 3), abs(offset), -offset)`,
+so ties prefer the smaller and then the positive offset. A NaN gap scores infinity.
 Offset is added to the jury score of remote-region applicants (`is_remote`), then `allocate` at the same budget.
 
 ## 7. Monitoring contract

@@ -64,8 +64,8 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 
 | WP | Task | Model | Depends | Done when |
 |---|---|---|---|---|
-| 7 | Cross-model review of `5a126b2..HEAD`: `codex review`; Fable red-team on harness invariants | Codex + Fable | — | findings triaged; P0/P1 fixed; list of triage decisions in commit message |
-| 8 | Acceptance, spec §11: forced correctable ALERT (`decide(..., eo_gap_alert=0.015)` or remote score shift) → `ADJUST_OFFSET` recorded; drift (batch R +3) → BLOCK, exit 3, existing `predictions.csv` byte-identical (I5); replay determinism (I4); import-graph rule (§7) | Opus | 7 | all four pass; evidence (commands + exit codes + hashes) in commit message |
+| 7 | ✅ Done: Codex gpt-6.1-sol + Fable review of `5a126b2..HEAD`; all P1/P2 fixed (fit_offset max-gap objective, NaN metrics → blocking ALERT, binary PSI, qcut edges, id validation, clean ValueError exit) | Codex + Fable | — | done |
+| 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → 16/16 PASS in 9 s (baseline, budget guard, duplicate id, correction, drift BLOCK + I5 sentinel, I4 replay, I2, I8, explain identity, §4 boundaries with injected-edge proof) | Sonnet | 7 | done |
 | 9 | Choose `DECLARED_CONFIG`: `tune --splits 10`, present table, user picks (10 splits: worst case merit 0.25 = 0.929 vs current 50/50 = 0.904, FINDINGS §5) | Opus presents, user decides | — | user choice written in `HARNESS_SPEC.md` and `models.py` matches |
 | 10 | `audit_rapport.ipynb` (10-section outline in FINDINGS §6), sklearn only, no statsmodels | Sonnet | — | `jupyter nbconvert --execute` runs top to bottom on `data/`, exit 0, no errors in cells |
 | 11 | README: replace top with our solution, commands, artifacts; keep organizer brief below | Sonnet | 8 | every command in README run once, exit 0 |
@@ -86,7 +86,7 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 
 ## 6. Known gaps and risks
 
-- Harness correction/block paths unexercised (WP8).
+- `eo_gap_alert=0.015` forced test: best offset +0.010 moves 14 applicants yet still blocks; the corrector's reach at the 0.05 production threshold is untested on a real drifted batch.
 - Declared config EO gap vs corrected reference 0.030 ± 0.011 (10 splits) at WARN threshold 0.03 [U]; this session single-batch value 0.022 [R].
 - All fairness references are proxies; hidden reference unknown (FINDINGS §4).
 - Monitor WARN on real batch: impact ratio 0.795, Cote-Nord 33.8 % vs Capitale-Nationale 42.5 % [R].
@@ -99,4 +99,4 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 
 ## 7. Next step
 
-Run WP7 (`codex review 5a126b2..HEAD`, read-only) and WP9 (present FINDINGS §5 table, user picks merit weight) in parallel, then WP8.
+WP9: present the 10-split table (FINDINGS §5, merit 0.25 worst case 0.929 vs current 50/50 0.904); user picks `DECLARED_CONFIG`. Then rerun `scripts/acceptance.py`.

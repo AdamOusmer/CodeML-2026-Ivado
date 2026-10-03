@@ -132,7 +132,9 @@ self-agreement.
 - `overturned_out` ties in strength are broken by worse main rank first; `overturned_in` by better main rank first.
 - Non-finite probabilities, ranking or juror scores raise `ValueError`.
 - Tuner skips quorum 0.5 with a single juror (identical to quorum 1.0): 9 configs, not 12.
-- Acceptance adds `jury_offset_monotone`: grants == k at all 41 offsets; remote grants non-decreasing within 2 applicants.
+- Acceptance adds `jury_offset_monotone`: grants == k at all 41 offsets; remote grants non-decreasing within 2 applicants, and reach (+0.10 minus −0.10) >= 10; forced correctable alert must record `ADJUST_OFFSET` with 0 < |offset| <= 0.10.
+- `near_cutoff` deliberately uses the decision rank (offset included). Tried the raw model rank per Codex review: the merit juror then cancels the offset entirely
+  (remote grants 594 at every offset, EO gap constant, forced alert → BLOCK), so the corrector would be dead. Reverted; acceptance now asserts `ADJUST_OFFSET` and offset reach >= 10.
 
 - Swap strength averages |juror percentile − cutoff| over dissenting jurors only (OVERTURN voters), so a confirming juror no longer dilutes it. Quorum stays 1.0.
 - Low-confidence trigger removed (`JurySettings.conf` gone, `JURY_REASONS = (near_cutoff, disagreement)`); evidence in §3.

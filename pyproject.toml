@@ -17,3 +17,9 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+research = [
+    "lightgbm>=4.7.0",
+    "torch>=2.14.1",
+]

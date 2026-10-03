@@ -613,6 +613,8 @@ def check_jury_offset_monotone(ctx) -> str:
     drops = [(a, b) for a, b in zip(series, series[1:]) if b < a - 2]
     assert not drops, f"remote grants fall by more than 2: {drops}"
     assert series[-1] >= series[0], f"remote grants {series[0]} -> {series[-1]} decrease overall"
+    reach = remote_grants[0.1] - remote_grants[-0.1]
+    assert reach >= 10, f"offset reach {reach} < 10: remote grants {remote_grants[-0.1]} at -0.10, {remote_grants[0.1]} at +0.10"
     return f"remote grants {remote_grants[-0.1]}/{remote_grants[0.0]}/{remote_grants[0.1]} at -0.10/0/+0.10, grants={k} at {len(grants)} offsets"
 
 

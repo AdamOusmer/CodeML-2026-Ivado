@@ -6,11 +6,10 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.harness import DecisionRecord
+from src.harness import DecisionRecord, InputError
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,11 @@ def sha256(path: Path) -> str:
 
 
 def read_table(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path)
+    table = pd.read_csv(path)
+    index = table.index
+    if not (isinstance(index, pd.RangeIndex) and index.start == 0 and index.step == 1):
+        raise InputError(f"{path.name}: rows have more fields than the header")
+    return table
 
 
 def read_inputs(history_path: Path, batch_path: Path) -> Inputs:
@@ -70,5 +73,4 @@ def write_decision(record: DecisionRecord, out_dir: Path) -> list[Path]:
 def save_figure(figure, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=150)
-    plt.close(figure)
     return path

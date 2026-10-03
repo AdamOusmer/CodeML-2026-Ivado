@@ -11,6 +11,10 @@ from src.common.logging import RunContext, configure_logging
 from src.preprocessing.validation import REGIONS, DatasetReport, DataValidationError, validate_datasets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_HISTORY = PROJECT_ROOT / "data/donnees_demandes.csv"
+DEFAULT_CANDIDATES = PROJECT_ROOT / "data/candidats_evaluation.csv"
+EXIT_ALERT = 3
+STATUS_STYLE = {"OK": "green", "WARN": "yellow", "ALERT": "bold red"}
 
 
 def positive_int(value: str) -> int:
@@ -44,15 +48,29 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check-data", parents=[common],
                                 help="validate both CSVs and report dataset counts",
                                 description="Check schema, values, row counts, IDs, and train/evaluation separation.")
-    check.add_argument("--train-file", type=Path, default=PROJECT_ROOT / "data/donnees_demandes.csv",
+    check.add_argument("--train-file", type=Path, default=DEFAULT_HISTORY,
                        metavar="CSV", help="historical CSV (default: supplied project data)")
-    check.add_argument("--evaluation-file", type=Path, default=PROJECT_ROOT / "data/candidats_evaluation.csv",
+    check.add_argument("--evaluation-file", type=Path, default=DEFAULT_CANDIDATES,
                        metavar="CSV", help="evaluation CSV (default: supplied project data)")
     check.add_argument("--expected-train-rows", type=positive_int, default=10_000, metavar="N",
                        help="expected historical row count (default: 10000)")
     check.add_argument("--expected-evaluation-rows", type=positive_int, default=4_000, metavar="N",
                        help="expected evaluation row count (default: 4000)")
     check.add_argument("--json", action="store_true", help="write the validation report as JSON to stdout")
+
+    monitor = commands.add_parser("monitor", parents=[common],
+                                  help="audit a batch of decisions for fairness and drift",
+                                  description=f"Grade budget, parity, opportunity, intersectional, proxy and feature-drift "
+                                              f"checks as OK, WARN or ALERT. Exits {EXIT_ALERT} when any check alerts.")
+    monitor.add_argument("--history", type=Path, default=DEFAULT_HISTORY, metavar="CSV",
+                         help="labeled historical CSV used as the baseline (default: supplied project data)")
+    monitor.add_argument("--batch", type=Path, default=DEFAULT_CANDIDATES, metavar="CSV",
+                         help="applications that were scored (default: supplied evaluation data)")
+    monitor.add_argument("--decisions", type=Path, default=PROJECT_ROOT / "predictions.csv", metavar="CSV",
+                         help="id_candidat,decision_octroi for the batch (default: predictions.csv)")
+    monitor.add_argument("--reviewed", type=Path, metavar="CSV",
+                         help="optional id_candidat,merite labels from a blind human review")
+    monitor.add_argument("--json", action="store_true", help="write the monitoring report as JSON to stdout")
     return parser
 
 
@@ -81,6 +99,64 @@ def show_summary(reports: tuple[DatasetReport, DatasetReport], run: RunContext) 
     run.console.print(regions)
 
 
+def run_check_data(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    reports = validate_datasets(args.train_file.resolve(), args.evaluation_file.resolve(), run=run,
+                                train_rows=args.expected_train_rows,
+                                evaluation_rows=args.expected_evaluation_rows)
+    if args.json:
+        print(json.dumps({"valid": True, "historical": reports[0].to_dict(),
+                          "evaluation": reports[1].to_dict()}, indent=2))
+    elif not quiet:
+        show_summary(reports, run)
+    return 0
+
+
+def load_batch(args: argparse.Namespace):
+    import pandas as pd
+
+    history, batch = pd.read_csv(args.history), pd.read_csv(args.batch)
+    decisions = pd.read_csv(args.decisions).set_index("id_candidat")["decision_octroi"]
+    missing = set(batch["id_candidat"]) - set(decisions.index)
+    if missing:
+        raise DataValidationError(f"{args.decisions.name}: no decision for {len(missing):,} batch applicants")
+    reviewed = None
+    if args.reviewed is not None:
+        reviewed = pd.read_csv(args.reviewed).set_index("id_candidat")["merite"].reindex(batch["id_candidat"])
+    return history, batch, decisions.reindex(batch["id_candidat"]).to_numpy(), reviewed
+
+
+def show_checks(checks, status: str, run: RunContext) -> None:
+    if run.console is None:
+        for check in checks:
+            print(f"{check.status:<5}  {check.name}: {check.value:.3f} ({check.threshold}) {check.detail}", file=sys.stderr)
+        print(f"Overall: {status}", file=sys.stderr)
+        return
+    table = Table(title=f"Fairness monitoring: [{STATUS_STYLE[status]}]{status}[/]")
+    for column, justify in [("Check", "left"), ("Value", "right"), ("Threshold", "left"), ("Status", "center"), ("Detail", "left")]:
+        table.add_column(column, justify=justify)
+    for check in checks:
+        table.add_row(check.name, f"{check.value:.3f}", check.threshold,
+                      f"[{STATUS_STYLE[check.status]}]{check.status}[/]", check.detail)
+    run.console.print(table)
+
+
+def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    from src.monitoring.checks import overall_status, run_checks
+
+    with run.stage("Monitoring decisions"):
+        history, batch, decisions, reviewed = load_batch(args)
+        checks = run_checks(history, batch, decisions, reviewed)
+    status = overall_status(checks)
+    if args.json:
+        print(json.dumps({"status": status, "checks": [check.to_dict() for check in checks]}, indent=2))
+    elif not quiet:
+        show_checks(checks, status, run)
+    return EXIT_ALERT if status == "ALERT" else 0
+
+
+COMMANDS = {"check-data": run_check_data, "monitor": run_monitor}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -102,18 +178,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         run.logger.debug("Command: %s; project: %s", args.command, PROJECT_ROOT)
-        reports = validate_datasets(args.train_file.resolve(), args.evaluation_file.resolve(), run=run,
-                                    train_rows=args.expected_train_rows,
-                                    evaluation_rows=args.expected_evaluation_rows)
-        if args.json:
-            print(json.dumps({"valid": True, "historical": reports[0].to_dict(),
-                              "evaluation": reports[1].to_dict()}, indent=2))
-        elif not quiet:
-            show_summary(reports, run)
+        exit_code = COMMANDS[args.command](args, run, quiet)
         if run.log_path is not None:
             run.logger.info("Log: %s", run.log_path)
-        return 0
-    except DataValidationError as exc:
+        return exit_code
+    except (DataValidationError, FileNotFoundError, KeyError) as exc:
         run.logger.error("%s", exc)
         run.logger.debug("Validation error details", exc_info=True)
         return 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -71,6 +72,28 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--reviewed", type=Path, metavar="CSV",
                          help="optional id_candidat,merite labels from a blind human review")
     monitor.add_argument("--json", action="store_true", help="write the monitoring report as JSON to stdout")
+
+    decide = commands.add_parser("decide", parents=[common],
+                                 help="take automated decisions for a batch through the harness",
+                                 description=f"Fit the declared policy, decide, audit, correct once if allowed, or block. "
+                                             f"Writes predictions.csv only when published. Exits {EXIT_ALERT} when blocked.")
+    decide.add_argument("--history", type=Path, default=DEFAULT_HISTORY, metavar="CSV",
+                        help="labeled historical CSV (default: supplied project data)")
+    decide.add_argument("--batch", type=Path, default=DEFAULT_CANDIDATES, metavar="CSV",
+                        help="applications to decide (default: supplied evaluation data)")
+    decide.add_argument("--out-dir", type=Path, default=PROJECT_ROOT, metavar="DIR",
+                        help="where to write predictions.csv, decision_record.json, explanations.csv")
+    decide.add_argument("--json", action="store_true", help="write the decision record as JSON to stdout")
+
+    for name, splits, help_text in [("pareto", 10, "evaluate every candidate and plot the Pareto front"),
+                                    ("tune", 5, "score the jury weight search space against the fairness references")]:
+        experiment = commands.add_parser(name, parents=[common], help=help_text, description=help_text)
+        experiment.add_argument("--history", type=Path, default=DEFAULT_HISTORY, metavar="CSV",
+                                help="labeled historical CSV (default: supplied project data)")
+        experiment.add_argument("--splits", type=positive_int, default=splits, metavar="N",
+                                help=f"stratified 70/30 splits (default: {splits})")
+        experiment.add_argument("--workers", type=positive_int, default=4, metavar="N", help="threads (default: 4)")
+        experiment.add_argument("--out-dir", type=Path, default=PROJECT_ROOT, metavar="DIR", help="output directory")
     return parser
 
 
@@ -154,7 +177,61 @@ def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
     return EXIT_ALERT if status == "ALERT" else 0
 
 
-COMMANDS = {"check-data": run_check_data, "monitor": run_monitor}
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    import pandas as pd
+
+    from src.harness.controller import decide
+
+    with run.stage("Deciding"):
+        history, batch = pd.read_csv(args.history), pd.read_csv(args.batch)
+        record = decide(history, batch, {path.name: sha256(path) for path in (args.history, args.batch)})
+        written = record.write(args.out_dir)
+    if args.json:
+        print(json.dumps(record.summary(), indent=2, default=float))
+    elif not quiet:
+        show_checks(record.verdicts[-1].checks, record.verdicts[-1].status, run)
+        for action in record.actions:
+            run.logger.info("%s: %s %s", action.kind.value, action.reason, action.params)
+        run.logger.info("Status: %s; %s of %s granted; wrote %s", record.status, int(record.decisions.sum()),
+                        len(record.decisions), ", ".join(path.name for path in written))
+    return 0 if record.published else EXIT_ALERT
+
+
+def run_pareto(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    import pandas as pd
+
+    from src.evaluation.candidates import pareto_report
+    from src.policy.core import budget_share
+
+    with run.stage(f"Evaluating candidates over {args.splits} splits"):
+        history = pd.read_csv(args.history)
+        report = pareto_report(history, budget_share(history), args.splits, args.workers, args.out_dir)
+    if not quiet:
+        print(report.round(3).to_string(index=False))
+    return 0
+
+
+def run_tune(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    import pandas as pd
+
+    from src.evaluation.tuner import SEARCH_SPACE, tune
+    from src.policy.core import budget_share
+
+    with run.stage(f"Tuning {len(SEARCH_SPACE)} configurations over {args.splits} splits"):
+        history = pd.read_csv(args.history)
+        table = tune(history, budget_share(history), SEARCH_SPACE, args.splits, args.workers)
+        table.to_csv(args.out_dir / "resultats_tuner.csv", index=False)
+    if not quiet:
+        print(table.round(3).to_string(index=False))
+    return 0
+
+
+COMMANDS = {"check-data": run_check_data, "monitor": run_monitor, "decide": run_decide,
+            "pareto": run_pareto, "tune": run_tune}
 
 
 def main(argv: list[str] | None = None) -> int:

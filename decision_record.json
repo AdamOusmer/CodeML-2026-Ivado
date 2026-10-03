@@ -1,0 +1,107 @@
+{
+  "status": "published",
+  "config": {
+    "name": "jury 50/50",
+    "removal": 1.0,
+    "jury_weights": {
+      "main_model": 0.5,
+      "merit": 0.5
+    }
+  },
+  "share": 0.3994,
+  "grants": 1598,
+  "applicants": 4000,
+  "offset": 0.0,
+  "actions": [
+    {
+      "kind": "SELECT_CONFIG",
+      "reason": "declared configuration",
+      "params": {
+        "config": "jury 50/50"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "status": "WARN",
+      "checks": [
+        {
+          "name": "grant rate within budget",
+          "value": 0.3995,
+          "threshold": "36%-44%",
+          "status": "OK",
+          "detail": "1,598 of 4,000",
+          "correctable": false
+        },
+        {
+          "name": "demographic parity gap (centre vs remote)",
+          "value": 0.060478307527211395,
+          "threshold": "warn > 0.1",
+          "status": "OK",
+          "detail": "centre 42.4%, remote 36.4%",
+          "correctable": false
+        },
+        {
+          "name": "impact ratio, lowest/highest region",
+          "value": 0.7953244358335424,
+          "threshold": "warn < 0.8",
+          "status": "WARN",
+          "detail": "Cote-Nord 33.8% vs Capitale-Nationale 42.5%",
+          "correctable": false
+        },
+        {
+          "name": "opportunity gap vs merit reference",
+          "value": 0.007364658763487686,
+          "threshold": "warn > 0.03, alert > 0.05",
+          "status": "OK",
+          "detail": "deserving = top R scores at the same budget",
+          "correctable": true
+        },
+        {
+          "name": "opportunity gap vs corrected committee",
+          "value": 0.0220587866664661,
+          "threshold": "warn > 0.03, alert > 0.05",
+          "status": "OK",
+          "detail": "deserving = committee rule without regional penalty",
+          "correctable": true
+        },
+        {
+          "name": "largest intersectional gap (centre vs remote)",
+          "value": 0.06646709156848862,
+          "threshold": "warn > 0.15",
+          "status": "OK",
+          "detail": "first-generation",
+          "correctable": false
+        },
+        {
+          "name": "proxy drift: region predictability (AUC change)",
+          "value": 0.0065911381551905235,
+          "threshold": "alert > +0.05",
+          "status": "OK",
+          "detail": "history 0.854, batch 0.860",
+          "correctable": false
+        },
+        {
+          "name": "feature drift, max PSI",
+          "value": 0.012177451947296998,
+          "threshold": "warn > 0.1, alert > 0.25",
+          "status": "OK",
+          "detail": "log_revenu (centre)",
+          "correctable": false
+        }
+      ]
+    }
+  ],
+  "moved_ids": [],
+  "region_rates": {
+    "Bas-Saint-Laurent": 0.3512,
+    "Capitale-Nationale": 0.4251,
+    "Cote-Nord": 0.3381,
+    "Gaspesie-Iles-de-la-Madeleine": 0.3934,
+    "Montreal": 0.4236
+  },
+  "input_hashes": {
+    "donnees_demandes.csv": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",
+    "candidats_evaluation.csv": "5e6f1fdca94fea5417984fa035c05e1b579ea09b3427a4e0f005a769618eb4a7"
+  }
+}

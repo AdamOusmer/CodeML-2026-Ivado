@@ -1,0 +1,52 @@
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+from src.evaluation.core import scaled_utility
+from src.policy.core import allocate, eo_gap
+from src.policy.models import CommitteeModel, Config, FairPipeline, reference_labels
+from src.policy.regions import is_remote
+
+REFERENCES = ("corrected", "merit")
+EQUITY_WEIGHT, UTILITY_WEIGHT = 20, 15
+
+SEARCH_SPACE = [
+    Config(
+        f"merit {weight}",
+        removal=1.0,
+        jury_weights={juror: w for juror, w in (("main_model", 1 - weight), ("merit", weight)) if w > 0},
+    )
+    for weight in (0, 0.25, 0.5, 0.75, 1.0)
+]
+
+
+def score_split(history, share, config, seed):
+    train, test = train_test_split(history, test_size=0.3, random_state=seed, stratify=history["decision_octroi"])
+    remote = is_remote(test)
+    references = reference_labels(train, test, share)
+    committee = CommitteeModel().fit(train, train["decision_octroi"].to_numpy())
+    committee_decisions = allocate(committee.corrected_logit(test, removal=0.0), share)
+    decisions = FairPipeline(config, share).fit(train).predict(test)
+    row = {"config": config.name}
+    for name in REFERENCES:
+        reference = references[name]
+        gap = eo_gap(decisions, reference, remote)
+        equity = 1 - gap / eo_gap(committee_decisions, reference, remote)
+        utility = scaled_utility(decisions, reference, share)
+        row[f"eo_gap_{name}"] = gap
+        row[f"equity_{name}"] = equity
+        row[f"utility_{name}"] = utility
+        row[f"score_{name}"] = (EQUITY_WEIGHT * equity + UTILITY_WEIGHT * utility) / (EQUITY_WEIGHT + UTILITY_WEIGHT)
+    return row
+
+
+def tune(history: pd.DataFrame, share: float, configs: list[Config], splits: int = 5, workers: int = 4) -> pd.DataFrame:
+    jobs = list(product(configs, range(splits)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        rows = list(pool.map(lambda job: score_split(history, share, *job), jobs))
+    table = pd.DataFrame(rows).groupby("config", sort=False).mean().reset_index()
+    table["worst_case"] = np.minimum(table["score_corrected"], table["score_merit"])
+    return table.sort_values("worst_case", ascending=False, ignore_index=True)

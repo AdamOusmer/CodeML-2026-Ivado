@@ -6,18 +6,23 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 from .core import scaled_utility
-from src.policy import CommitteeModel, Config, FairPipeline, allocate, eo_gap, is_remote, reference_labels
+from src.policy import CommitteeModel, Config, FairPipeline, JurySettings, allocate, eo_gap, is_remote, reference_labels
 
 REFERENCES = ("corrected", "merit")
 EQUITY_WEIGHT, UTILITY_WEIGHT = 20, 15
 
+JURY_BANDS = (0.0125, 0.025, 0.05)
+QUORUMS = (0.5, 1.0)
+JUROR_SETS = (("merit",), ("merit", "programme_merit"))
+
 SEARCH_SPACE = [
     Config(
-        f"merit {weight}",
+        f"band {band}, quorum {quorum}, {'+'.join(jurors)}",
         removal=1.0,
-        jury_weights={juror: w for juror, w in (("main_model", 1 - weight), ("merit", weight)) if w > 0},
+        jury=JurySettings(band=band, quorum=quorum, jurors=jurors),
     )
-    for weight in (0, 0.25, 0.5, 0.75, 1.0)
+    for band, quorum, jurors in product(JURY_BANDS, QUORUMS, JUROR_SETS)
+    if not (quorum == 0.5 and len(jurors) == 1)
 ]
 
 

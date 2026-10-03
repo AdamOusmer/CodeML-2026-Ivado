@@ -1,11 +1,12 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from .core import allocate, logistic_regression, percentile
+from .core import allocate, logistic_regression
+from .jury import JurySettings, JuryOutcome, validate
 from .regions import is_remote
 from .schema import committee_features, scoring_features
 
@@ -14,10 +15,10 @@ from .schema import committee_features, scoring_features
 class Config:
     name: str
     removal: float = 1.0
-    jury_weights: dict = field(default_factory=lambda: {"main_model": 0.5, "merit": 0.5})
+    jury: JurySettings = JurySettings()
 
 
-DECLARED_CONFIG = Config("jury 50/50")
+DECLARED_CONFIG = Config("validator jury")
 
 
 class CommitteeModel:
@@ -44,24 +45,31 @@ class FairPipeline:
         self.committee_ = CommitteeModel().fit(history, history["decision_octroi"].to_numpy())
         corrected = allocate(self.committee_.corrected_logit(history, self.config.removal), self.share)
         self.main_model_ = logistic_regression().fit(scoring_features(history), corrected)
+        self.programme_stats_ = history.groupby("programme_etudes")["cote_r_equivalent"].agg(["mean", "std"])
         return self
 
     def model_probability(self, df):
         return self.main_model_.predict_proba(scoring_features(df))[:, 1]
 
-    def jury_score(self, df):
-        votes = {
-            "main_model": percentile(self.model_probability(df)),
-            "merit": percentile(df["cote_r_equivalent"].to_numpy()),
-        }
-        return sum(weight * votes[juror] for juror, weight in self.config.jury_weights.items())
+    def juror_scores(self, df):
+        merit = df["cote_r_equivalent"].to_numpy(dtype=float)
+        stats = self.programme_stats_.reindex(df["programme_etudes"])
+        mean = stats["mean"].to_numpy(dtype=float)
+        std = stats["std"].to_numpy(dtype=float)
+        return {"merit": merit, "programme_merit": (merit - mean) / std}
 
     def score(self, df, offset=0.0):
-        jury = self.jury_score(df)
-        return jury if offset == 0 else jury + offset * is_remote(df)
+        p = self.model_probability(df)
+        return p if offset == 0 else p + offset * is_remote(df)
+
+    def decide(self, df, offset=0.0) -> JuryOutcome:
+        probability = self.model_probability(df)
+        ranking = probability if offset == 0 else probability + offset * is_remote(df)
+        return validate(probability, self.juror_scores(df), int(round(self.share * len(df))),
+                        self.config.jury, ranking=ranking)
 
     def predict(self, df, offset=0.0):
-        return allocate(self.score(df, offset), self.share)
+        return self.decide(df, offset).decisions
 
     def contributions(self, df):
         scaler, lr = self.main_model_[0], self.main_model_[-1]

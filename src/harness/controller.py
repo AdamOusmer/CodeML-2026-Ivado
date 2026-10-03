@@ -8,9 +8,9 @@ from src.explain import explain
 from src.monitoring import EO_GAP_ALERT, Verdict, run_checks, verdict
 from src.policy import DECLARED_CONFIG, Config, FairPipeline, budget_share, eo_gap, is_remote, reference_labels
 
-from .record import Action, ActionKind, DecisionRecord
+from .record import Action, ActionKind, DecisionRecord, InputError
 
-OFFSET_GRID = np.linspace(-0.10, 0.10, 41)
+OFFSET_GRID = np.linspace(-0.10, 0.10, 41).round(3)
 NO_OFFSET_REASON = "no offset in the allowed grid lowers the gap"
 MERIT_ONLY_SUGGESTION = "review data drift, then consider the merit-only policy (jury weight merit = 1)"
 
@@ -42,15 +42,18 @@ def alerting(result: Verdict) -> list[str]:
 def check_ids(batch: pd.DataFrame) -> None:
     ids = batch["id_candidat"]
     if ids.isna().any():
-        raise ValueError("batch has missing id_candidat values")
+        raise InputError("batch has missing id_candidat values")
     if ids.duplicated().any():
-        raise ValueError(f"batch has {int(ids.duplicated().sum()):,} duplicated id_candidat values")
+        raise InputError(f"batch has {int(ids.duplicated().sum()):,} duplicated id_candidat values")
 
 
 def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, str],
            config: Config = DECLARED_CONFIG, eo_gap_alert: float = EO_GAP_ALERT) -> DecisionRecord:
     check_ids(batch)
-    share = budget_share(history)
+    try:
+        share = budget_share(history)
+    except ValueError as error:
+        raise InputError(str(error)) from error
     actions = [Action(ActionKind.SELECT_CONFIG, "declared configuration", {"config": config.name})]
     pipeline = FairPipeline(config, share).fit(history)
     offset = 0.0

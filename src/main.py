@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from rich.table import Table
 
 from src.common.logging import RunContext, configure_logging
+from src.harness import InputError
 from src.policy import REGIONS
 from src.preprocessing import DatasetReport, DataValidationError, validate_datasets
 
@@ -127,8 +127,9 @@ def run_check_data(args: argparse.Namespace, run: RunContext, quiet: bool) -> in
                                 train_rows=args.expected_train_rows,
                                 evaluation_rows=args.expected_evaluation_rows)
     if args.json:
-        print(json.dumps({"valid": True, "historical": reports[0].to_dict(),
-                          "evaluation": reports[1].to_dict()}, indent=2))
+        from src.adapters import json_text
+
+        print(json_text({"valid": True, "historical": reports[0].to_dict(), "evaluation": reports[1].to_dict()}))
     elif not quiet:
         show_summary(reports, run)
     return 0
@@ -164,6 +165,7 @@ def show_checks(checks, status: str, run: RunContext) -> None:
 
 
 def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
+    from src.adapters import json_text
     from src.monitoring import overall_status, run_checks
 
     with run.stage("Monitoring decisions"):
@@ -171,14 +173,14 @@ def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
         checks = run_checks(history, batch, decisions, reviewed)
     status = overall_status(checks)
     if args.json:
-        print(json.dumps({"status": status, "checks": [check.to_dict() for check in checks]}, indent=2))
+        print(json_text({"status": status, "checks": [check.to_dict() for check in checks]}))
     elif not quiet:
         show_checks(checks, status, run)
     return EXIT_ALERT if status == "ALERT" else 0
 
 
 def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    from src.adapters import read_inputs, write_decision
+    from src.adapters import json_text, read_inputs, write_decision
     from src.harness import decide
 
     with run.stage("Deciding"):
@@ -186,7 +188,7 @@ def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
         record = decide(inputs.history, inputs.batch, inputs.hashes)
         written = write_decision(record, args.out_dir)
     if args.json:
-        print(json.dumps(record.summary(), indent=2, default=float))
+        print(json_text(record.summary()))
     elif not quiet:
         show_checks(record.verdicts[-1].checks, record.verdicts[-1].status, run)
         for action in record.actions:
@@ -254,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         if run.log_path is not None:
             run.logger.info("Log: %s", run.log_path)
         return exit_code
-    except (DataValidationError, FileNotFoundError, KeyError, ValueError) as exc:
+    except (DataValidationError, FileNotFoundError, KeyError, InputError) as exc:
         run.logger.error("%s", exc)
         run.logger.debug("Validation error details", exc_info=True)
         return 1

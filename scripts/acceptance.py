@@ -25,7 +25,14 @@ SENTINEL = b"sentinel-do-not-touch\n"
 CLI = ["uv", "run", "python", "-m", "src.main"]
 CLI_FLAGS = ["--plain", "--no-log-file"]
 
-IO_CALLS = {"read_csv", "to_csv", "savefig", "write_text", "write_bytes", "read_text", "read_bytes", "open"}
+IO_CALLS = {
+    "read_csv", "to_csv", "savefig", "write_text", "write_bytes", "read_text", "read_bytes", "open",
+    "dump", "to_json", "to_parquet", "to_pickle", "save", "savetxt", "mkdir", "unlink", "rmtree",
+}
+DYNAMIC_IMPORTS = {"import_module", "__import__"}
+DYNAMIC_IMPORT_ALLOWED = ("src/policy/__init__.py",)
+FLAGGED_REGIONS = ("Bas-Saint-Laurent", "Cote-Nord", "Gaspesie-Iles-de-la-Madeleine")
+NO_OFFSET_REASON = "no offset in the allowed grid lowers the gap"
 IO_ALLOWED = ("src/adapters/", "src/main.py", "src/common/logging/", "src/preprocessing/validation.py")
 THIRD_PARTY_OK = {
     "policy": {"numpy", "pandas", "scipy", "sklearn"},
@@ -71,6 +78,14 @@ def run_decide_cli(history: Path, batch: Path, out_dir: Path) -> subprocess.Comp
     return run_cli("decide", *CLI_FLAGS, "--history", str(history), "--batch", str(batch), "--out-dir", str(out_dir))
 
 
+def reject_constant(name: str):
+    raise ValueError(f"non-strict JSON constant {name}")
+
+
+def load_strict(path: Path) -> dict:
+    return json.loads(path.read_text(), parse_constant=reject_constant)
+
+
 def action_kinds(record) -> list[str]:
     return [getattr(action.kind, "value", str(action.kind)) for action in record.actions]
 
@@ -112,6 +127,7 @@ def check_baseline(ctx) -> str:
     assert "ADJUST_OFFSET" not in action_kinds(record), f"actions {action_kinds(record)}"
     out = ctx["tmp"] / "baseline"
     write_decision(record, out)
+    load_strict(out / "decision_record.json")
     predictions = pd.read_csv(out / "predictions.csv")
     assert list(predictions["id_candidat"]) == list(batch["id_candidat"]), "id order differs from batch"
     assert len(predictions) == 4000 and int(predictions["decision_octroi"].sum()) == grants, "predictions.csv mismatch"
@@ -129,7 +145,7 @@ def check_budget_guard(ctx) -> str:
     lines = [line for line in result.stderr.splitlines() if line.strip().startswith("ERROR")]
     assert result.returncode == 1, f"exit {result.returncode}, stderr tail {result.stderr.splitlines()[-1:]}"
     assert "Traceback" not in result.stderr, "traceback in stderr"
-    assert not (out / "predictions.csv").exists(), "predictions.csv written"
+    assert not out.exists() or not any(out.iterdir()), f"files written: {sorted(p.name for p in out.iterdir())}"
     assert len(lines) == 1, f"{len(lines)} ERROR lines: {lines[:3]}"
     return f"rate={rate:.2f} exit=1 {lines[0][:100]!r}"
 
@@ -144,7 +160,8 @@ def check_duplicate_id(ctx) -> str:
     lines = [line for line in result.stderr.splitlines() if line.strip()]
     assert result.returncode == 1, f"exit {result.returncode}, stderr tail {lines[-1:]}"
     assert "Traceback" not in result.stderr, "traceback in stderr"
-    assert not (out / "predictions.csv").exists(), "predictions.csv written"
+    assert "duplicated id_candidat" in result.stderr, f"stderr tail {lines[-1:]}"
+    assert not out.exists() or not any(out.iterdir()), f"files written: {sorted(p.name for p in out.iterdir())}"
     return f"exit=1 stderr={lines[-1][:90]!r}" if lines else "exit=1"
 
 
@@ -153,16 +170,22 @@ def check_forced_correctable_alert(ctx) -> str:
     kinds = action_kinds(record)
     n = len(record.decisions)
     grants = int(np.sum(record.decisions))
-    assert grants == round(record.share * n), f"grants {grants} != round(share*n)"
-    if "ADJUST_OFFSET" not in kinds:
-        assert kinds[-1] == "BLOCK", f"neither ADJUST_OFFSET nor BLOCK: {kinds}"
-        return f"BLOCK without ADJUST_OFFSET actions={kinds}"
     offset = float(record.offset)
-    if offset == 0 and record.status == "blocked":
-        return f"ADJUST_OFFSET offset=0 then BLOCK (no improving offset) actions={kinds}"
+    assert "ADJUST_OFFSET" in kinds, f"no ADJUST_OFFSET: {kinds}"
     assert 0 < abs(offset) <= 0.10 + 1e-12, f"offset {offset}"
     assert len(record.moved_ids) > 0, "moved_ids empty"
+    assert grants == round(record.share * n), f"grants {grants} != round(share*n)"
     return f"ADJUST_OFFSET offset={offset:+.3f} moved={len(record.moved_ids)} status={record.status} grants={grants}"
+
+
+def block_action(summary: dict) -> dict:
+    blocks = [action for action in summary["actions"] if action["kind"] == "BLOCK"]
+    assert len(blocks) == 1, f"{len(blocks)} BLOCK actions"
+    return blocks[0]
+
+
+def alert_checks(summary: dict) -> list[dict]:
+    return [check for verdict in summary["verdicts"] for check in verdict["checks"] if check["status"] == "ALERT"]
 
 
 def check_drift_block(ctx) -> str:
@@ -174,11 +197,47 @@ def check_drift_block(ctx) -> str:
     result = run_decide_cli(HISTORY_PATH, batch_path, out)
     assert result.returncode == 3, f"exit {result.returncode}, stderr tail {result.stderr.splitlines()[-1:]}"
     assert (out / "predictions.csv").read_bytes() == SENTINEL, "sentinel predictions.csv changed (I5)"
-    summary = json.loads((out / "decision_record.json").read_text())
+    summary = load_strict(out / "decision_record.json")
     kinds = [action["kind"] for action in summary["actions"]]
     assert summary["status"] == "blocked", f"status {summary['status']}"
     assert "ADJUST_OFFSET" not in kinds, f"actions {kinds}"
+    checks = block_action(summary)["params"]["checks"]
+    assert "feature drift, max PSI" in checks, f"BLOCK checks {checks}"
     return f"exit=3 status=blocked actions={kinds} sentinel intact"
+
+
+def check_categorical_drift(ctx) -> str:
+    batch = ctx["batch"].copy()
+    batch["premiere_generation_universitaire"] = 0
+    batch_path = ctx["tmp"] / "batch_categorical_drift.csv"
+    batch.to_csv(batch_path, index=False)
+    out = ctx["tmp"] / "categorical_drift"
+    result = run_decide_cli(HISTORY_PATH, batch_path, out)
+    assert result.returncode == 3, f"exit {result.returncode}, stderr tail {result.stderr.splitlines()[-1:]}"
+    summary = load_strict(out / "decision_record.json")
+    kinds = [action["kind"] for action in summary["actions"]]
+    assert "ADJUST_OFFSET" not in kinds, f"actions {kinds}"
+    drift = [check for check in alert_checks(summary) if check["name"] == "feature drift, max PSI"]
+    assert drift and not any(check["correctable"] for check in drift), f"drift alerts {drift}"
+    assert "feature drift, max PSI" in block_action(summary)["params"]["checks"], "BLOCK lacks drift check"
+    return f"exit=3 PSI={drift[0]['value']:.2f} actions={kinds}"
+
+
+def check_uncomputable_metric_block(ctx) -> str:
+    batch = ctx["batch"]
+    remote = batch[batch["region_administrative"].isin(FLAGGED_REGIONS)]
+    assert 0 < len(remote) < len(batch), f"remote rows {len(remote)}"
+    batch_path = ctx["tmp"] / "batch_remote_only.csv"
+    remote.to_csv(batch_path, index=False)
+    out = ctx["tmp"] / "uncomputable"
+    result = run_decide_cli(HISTORY_PATH, batch_path, out)
+    assert result.returncode == 3, f"exit {result.returncode}, stderr tail {result.stderr.splitlines()[-1:]}"
+    summary = load_strict(out / "decision_record.json")
+    kinds = [action["kind"] for action in summary["actions"]]
+    assert "ADJUST_OFFSET" not in kinds, f"actions {kinds}"
+    stuck = [check for check in alert_checks(summary) if not check["correctable"] and check["value"] is None]
+    assert stuck, "no non-correctable ALERT check with null value"
+    return f"exit=3 rows={len(remote)} actions={kinds} uncomputable={[check['name'] for check in stuck][:2]}"
 
 
 def check_alert_after_correction(ctx) -> str:
@@ -186,10 +245,29 @@ def check_alert_after_correction(ctx) -> str:
     out = make_sentinel_dir(ctx["tmp"], "alert_after_correction")
     record = decide_and_write(ctx["history"], batch, out, eo_gap_alert=-1.0)
     kinds = action_kinds(record)
+    assert "ADJUST_OFFSET" in kinds and "BLOCK" in kinds, f"actions {kinds}"
+    assert kinds.index("ADJUST_OFFSET") < kinds.index("BLOCK"), f"order {kinds}"
     assert kinds[-1] == "BLOCK", f"actions {kinds}"
     assert record.status == "blocked", f"status {record.status}"
     assert (out / "predictions.csv").read_bytes() == SENTINEL, "sentinel predictions.csv changed (I5)"
     return f"actions={kinds} sentinel intact"
+
+
+def check_zero_offset_block(ctx) -> str:
+    import src.harness.controller as controller
+
+    original = controller.fit_offset
+    controller.fit_offset = lambda *args, **kwargs: 0.0
+    try:
+        record = ctx["baseline_decide"](eo_gap_alert=0.015)
+    finally:
+        controller.fit_offset = original
+    kinds = action_kinds(record)
+    assert kinds == ["SELECT_CONFIG", "BLOCK"], f"actions {kinds}"
+    assert record.actions[-1].reason == NO_OFFSET_REASON, f"reason {record.actions[-1].reason!r}"
+    assert len(record.verdicts) == 1, f"{len(record.verdicts)} verdicts"
+    assert record.status == "blocked", f"status {record.status}"
+    return f"actions={kinds} reason={NO_OFFSET_REASON!r}"
 
 
 def check_replay(ctx) -> str:
@@ -224,6 +302,8 @@ def check_tuner_not_live(ctx) -> str:
     out.mkdir()
     result = run_cli("tune", *CLI_FLAGS, "--splits", "1", "--workers", "2", "--out-dir", str(out))
     assert result.returncode == 0, f"tune exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
+    produced = {path.name for path in out.iterdir()}
+    assert produced == {"resultats_tuner.csv"}, f"tune wrote {sorted(produced)}"
     directory = ctx["tmp"] / "after_tune"
     decide_and_write(ctx["history"], ctx["batch"], directory)
     reference = ctx.get("replay_hashes")
@@ -251,7 +331,14 @@ def module_parts(root: Path, path: Path) -> tuple[list[str], list[str]]:
     return parts, package
 
 
-def resolve_imports(node, package_parts: list[str]) -> list[list[str]]:
+def is_submodule(root: Path, package: str, name: str) -> bool:
+    base = root / "src" / package
+    if not base.is_dir():
+        return False
+    return name in {path.name.removesuffix(".py") for path in base.iterdir() if path.suffix == ".py" or path.is_dir()}
+
+
+def resolve_imports(root: Path, node, package_parts: list[str]) -> list[list[str]]:
     if isinstance(node, ast.Import):
         return [alias.name.split(".") for alias in node.names]
     if node.level:
@@ -262,7 +349,19 @@ def resolve_imports(node, package_parts: list[str]) -> list[list[str]]:
     target = base + (node.module.split(".") if node.module else [])
     if target == ["src"]:
         return [target + [alias.name] for alias in node.names]
+    if len(target) == 2 and target[0] == "src":
+        return [target + [alias.name] if is_submodule(root, target[1], alias.name) else target for alias in node.names]
     return [target]
+
+
+def attribute_chain(node) -> list[str]:
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        return [node.id, *reversed(parts)]
+    return []
 
 
 def is_stdlib(name: str) -> bool:
@@ -279,13 +378,19 @@ def scan_file(root: Path, path: Path) -> list[tuple[str, str, int, str]]:
     tree = ast.parse(path.read_text(), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for target in resolve_imports(node, package_parts):
+            for target in resolve_imports(root, node, package_parts):
                 check_import(relative, node.lineno, own, target, violations)
+        if isinstance(node, ast.Attribute):
+            chain = attribute_chain(node)
+            if len(chain) >= 3 and chain[0] == "src" and is_submodule(root, chain[1], chain[2]):
+                check_import(relative, node.lineno, own, chain[:3], violations)
         if isinstance(node, ast.Call):
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
             if name in IO_CALLS and not relative.startswith(IO_ALLOWED):
                 violations.append(("io", relative, node.lineno, f"{name}() outside allowed files"))
+            if name in DYNAMIC_IMPORTS and relative not in DYNAMIC_IMPORT_ALLOWED:
+                violations.append(("deep", relative, node.lineno, f"{name}() dynamic import"))
     return violations
 
 
@@ -361,6 +466,13 @@ def check_boundary_proof(ctx) -> str:
         ("proof_deep", "monitoring", "from src.policy.core import eo_gap", {"deep"}),
         ("proof_direction", "monitoring", "from src.evaluation import tune", {"direction"}),
         ("proof_io", "harness", "pd_frame = None\npd_frame.to_csv('x.csv')", {"io"}),
+        ("proof_io_dump", "harness", "import json\njson.dump({}, None)", {"io"}),
+        ("proof_io_mkdir", "harness", "from pathlib import Path\nPath('x').mkdir()", {"io"}),
+        ("proof_from_submodule", "monitoring", "from src.policy import core", {"deep"}),
+        ("proof_import_module", "monitoring",
+         "import importlib\nimportlib.import_module('src.evaluation.tuner')", {"deep"}),
+        ("proof_dunder_import", "monitoring", "__import__('src.policy.core')", {"deep"}),
+        ("proof_attribute_chain", "monitoring", "import src.policy\nsrc.policy.core.eo_gap", {"deep"}),
     ]
     notes = []
     for name, package, line, expected in probes:
@@ -444,7 +556,10 @@ def main() -> int:
     run_check("budget_guard", check_budget_guard, ctx)
     run_check("duplicate_id", check_duplicate_id, ctx)
     run_check("forced_correctable_alert", check_forced_correctable_alert, ctx)
+    run_check("zero_offset_block", check_zero_offset_block, ctx)
     run_check("drift_block", check_drift_block, ctx)
+    run_check("categorical_drift", check_categorical_drift, ctx)
+    run_check("uncomputable_metric_block", check_uncomputable_metric_block, ctx)
     run_check("alert_after_correction", check_alert_after_correction, ctx)
     run_check("replay", check_replay, ctx)
     run_check("region_blindness", check_region_blindness, ctx)

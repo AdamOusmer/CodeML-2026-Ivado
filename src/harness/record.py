@@ -10,6 +10,10 @@ from src.monitoring import Verdict
 from src.policy import Config
 
 
+class InputError(ValueError):
+    pass
+
+
 class ActionKind(str, Enum):
     SELECT_CONFIG = "SELECT_CONFIG"
     ADJUST_OFFSET = "ADJUST_OFFSET"

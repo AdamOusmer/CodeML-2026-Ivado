@@ -1,14 +1,12 @@
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 
 from .core import allocate, logistic_regression
 from .jury import JurySettings, JuryOutcome, validate
+from .label_correction import CommitteeModel, correct_labels, effective_removal
 from .regions import is_remote
-from .schema import committee_features, scoring_features
+from .schema import scoring_features
 
 
 @dataclass(frozen=True)
@@ -20,20 +18,12 @@ class Config:
 
 DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))
 
+OFFSET_BOUND = 0.10
 
-class CommitteeModel:
-    def fit(self, df, y):
-        X = committee_features(df)
-        self.scaler_ = StandardScaler().fit(X)
-        Z = np.column_stack([self.scaler_.transform(X), is_remote(df)])
-        self.lr_ = LogisticRegression(max_iter=3000).fit(Z, y)
-        self.remote_penalty_ = self.lr_.coef_[0][-1]
-        return self
 
-    def corrected_logit(self, df, removal=1.0):
-        Z = self.scaler_.transform(committee_features(df))
-        base = Z @ self.lr_.coef_[0][:-1] + self.lr_.intercept_[0]
-        return base + (1.0 - removal) * self.remote_penalty_ * is_remote(df)
+def check_offset(offset):
+    if not abs(offset) <= OFFSET_BOUND:
+        raise ValueError(f"Offset {offset} exceeds the bound {OFFSET_BOUND}")
 
 
 class FairPipeline:
@@ -42,9 +32,8 @@ class FairPipeline:
         self.share = share
 
     def fit(self, history):
-        self.committee_ = CommitteeModel().fit(history, history["decision_octroi"].to_numpy())
-        corrected = allocate(self.committee_.corrected_logit(history, self.config.removal), self.share)
-        self.main_model_ = logistic_regression().fit(scoring_features(history), corrected)
+        self.label_correction_ = correct_labels(history, history["decision_octroi"].mean(), self.config.removal)
+        self.main_model_ = logistic_regression().fit(scoring_features(history), self.label_correction_.labels)
         self.programme_stats_ = history.groupby("programme_etudes")["cote_r_equivalent"].agg(["mean", "std"])
         return self
 
@@ -59,10 +48,12 @@ class FairPipeline:
         return {"merit": merit, "programme_merit": (merit - mean) / std}
 
     def score(self, df, offset=0.0):
+        check_offset(offset)
         p = self.model_probability(df)
         return p if offset == 0 else p + offset * is_remote(df)
 
     def decide(self, df, offset=0.0) -> JuryOutcome:
+        check_offset(offset)
         probability = self.model_probability(df)
         ranking = probability if offset == 0 else probability + offset * is_remote(df)
         return validate(probability, self.juror_scores(df), int(round(self.share * len(df))),
@@ -80,7 +71,7 @@ class FairPipeline:
 def reference_labels(history, target, share):
     committee = CommitteeModel().fit(history, history["decision_octroi"].to_numpy())
     references = {
-        "corrected": allocate(committee.corrected_logit(target), share),
+        "corrected": allocate(committee.corrected_logit(target, effective_removal(committee.remote_penalty_, 1.0)), share),
         "merit": allocate(target["cote_r_equivalent"].to_numpy(), share),
     }
     if "decision_octroi" in target:

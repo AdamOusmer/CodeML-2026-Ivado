@@ -35,7 +35,7 @@
         },
         {
           "name": "demographic parity gap (centre vs remote)",
-          "value": 0.060478307527211395,
+          "value": 0.05944247175275846,
           "threshold": "warn > 0.1",
           "status": "OK",
           "detail": "centre 42.4%, remote 36.4%",
@@ -43,15 +43,15 @@
         },
         {
           "name": "impact ratio, lowest/highest region",
-          "value": 0.7953244358335424,
+          "value": 0.7907926726663997,
           "threshold": "warn < 0.8",
           "status": "WARN",
-          "detail": "Cote-Nord 33.8% vs Capitale-Nationale 42.5%",
+          "detail": "Cote-Nord 33.8% vs Capitale-Nationale 42.8%",
           "correctable": false
         },
         {
           "name": "opportunity gap vs merit reference",
-          "value": 0.007364658763487686,
+          "value": 0.009079924629696867,
           "threshold": "warn > 0.03, alert > 0.05",
           "status": "OK",
           "detail": "deserving = top R scores at the same budget",
@@ -59,7 +59,7 @@
         },
         {
           "name": "opportunity gap vs corrected committee",
-          "value": 0.0220587866664661,
+          "value": 0.021057785665465123,
           "threshold": "warn > 0.03, alert > 0.05",
           "status": "OK",
           "detail": "deserving = committee rule without regional penalty",
@@ -67,7 +67,7 @@
         },
         {
           "name": "largest intersectional gap (centre vs remote)",
-          "value": 0.06646709156848862,
+          "value": 0.06510654735080157,
           "threshold": "warn > 0.15",
           "status": "OK",
           "detail": "first-generation",
@@ -75,10 +75,10 @@
         },
         {
           "name": "proxy drift: region predictability (AUC change)",
-          "value": 0.0065911381551905235,
+          "value": 0.008116983842461178,
           "threshold": "alert > +0.05",
           "status": "OK",
-          "detail": "history 0.854, batch 0.860",
+          "detail": "history 0.845, batch 0.853",
           "correctable": false
         },
         {
@@ -88,6 +88,14 @@
           "status": "OK",
           "detail": "log_revenu (centre)",
           "correctable": false
+        },
+        {
+          "name": "categorical drift, max PSI",
+          "value": 0.038285997691603305,
+          "threshold": "warn > 0.1, alert > 0.25",
+          "status": "OK",
+          "detail": "programme_etudes (Gaspesie-Iles-de-la-Madeleine), largest shift Genie +7.98 points",
+          "correctable": false
         }
       ]
     }
@@ -95,10 +103,10 @@
   "moved_ids": [],
   "region_rates": {
     "Bas-Saint-Laurent": 0.3512,
-    "Capitale-Nationale": 0.4251,
+    "Capitale-Nationale": 0.4275,
     "Cote-Nord": 0.3381,
-    "Gaspesie-Iles-de-la-Madeleine": 0.3934,
-    "Montreal": 0.4236
+    "Gaspesie-Iles-de-la-Madeleine": 0.3949,
+    "Montreal": 0.4217
   },
   "input_hashes": {
     "donnees_demandes.csv": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",

@@ -52,8 +52,9 @@ Removing the regional penalty preserves both. For a need-based award this is a s
 - `validate_frames(history, batch) -> FrameReport`, raising `DataValidationError` with the same message style as
   `validate_datasets`. Vectorized on DataFrames (the CSV streaming validator stays for `check-data`).
 - Rules shared with the CSV validator from one table in `src/preprocessing/rules.py` (no duplicated constants):
-  required columns (label only in history); unique IDs, disjoint history/batch IDs; `C\d{6}` IDs; known
-  programmes and regions (reject unknown, never default to the baseline category); `A1A` postal format;
+  required columns (label only in history); unique IDs, disjoint history/batch IDs; `C[0-9]{6}` IDs; known
+  programmes and regions (reject unknown, never default to the baseline category); `A1A` postal format
+  `[A-Z][0-9][A-Z]` (ASCII digits only);
   binary fields in {0, 1}; R in [15, 40]; hours in [0, 168]; distance ≥ 0; **income strictly > 0**
   (the current validator accepts 0 and `log(0) = -inf`); every value finite after transforms.
 - Warnings, not errors, in `FrameReport.warnings`: postal prefix whose region differs from history's mapping;
@@ -115,3 +116,73 @@ Gaspésie 0.040.
 | Drop hours | 0.766 | 0.766 | 0.373 |
 | Drop income and hours | 0.843 | 0.843 | 0.484 |
 | R only | 0.845 | 0.845 | 0.489 |
+
+## 8. Node architecture (supersedes the file split in §2–3 where they differ)
+
+Every multi-step flow is a declared graph of nodes. Order comes from data dependencies, not list position, so steps
+can be added, replaced, removed or reordered by editing one node tuple. Independent nodes run concurrently.
+
+### 8.1 Runtime — `src/common/graph.py` (stdlib only)
+- `Node(name, fn, inputs=(), after=())`, frozen dataclass. The node's artifact is named `name`. `fn` receives the
+  artifacts named in `inputs`, positionally. `after` lists node names that must finish first without passing data.
+- `GraphError(ValueError)`.
+- `Graph(nodes)`: rejects duplicate names, `after` naming no node, and cycles. An input that names no node is a seed.
+  `nodes`, `seeds` (frozenset), `order()` (topological, ties broken by declaration order),
+  `add(*nodes)`, `replace(node)` (same name, same position), `without(*names)` all return a new `Graph`.
+- `run(seeds, *, targets=None, workers=1) -> dict`: runs the targets and their transitive dependencies (all nodes when
+  `targets` is None). Before running anything it raises `GraphError` for an unknown target, a missing seed, a seed
+  that shares a node's name, or `workers < 1`. `workers == 1` runs inline in `order()`; otherwise a
+  `ThreadPoolExecutor` runs every ready node. The first node exception stops scheduling and is re-raised unchanged
+  after running nodes finish: queued nodes are skipped once a failure or interrupt is seen, and active nodes are drained before `run` raises. Returns the seeds plus every produced artifact.
+
+### 8.2 Policy schema — `src/policy/schema.py` (numpy, pandas only; keeps `REGIONS`-style lazy import sklearn-free)
+- `PROGRAMMES` (moved from `core.py`, base category first), `TRANSFORMS: dict[str, Callable[[DataFrame], Series]]`
+  (one entry per derived column, committee order), `COMMITTEE_FEATURES = list(TRANSFORMS)`, `SCORING_FEATURES`.
+- `feature_frame(df, schema)`, `committee_features(df)`, `scoring_features(df)`; columns in schema order, index = `df.index`.
+- `legitimate_features` is deleted. Callers per §2.1.
+
+### 8.3 Frame validation — `src/preprocessing/`
+- `rules.py`: the single rules table shared by the CSV and frame validators: `DataValidationError` (moved here),
+  `FEATURE_COLUMNS`, `LABEL_COLUMN`, `ID_PATTERN`, `POSTAL_PATTERN`, `CATEGORIES`, `BINARY_COLUMNS`,
+  `Bound(low, high=None, strict_low=False)` with `accepts(values)` (scalar or array; finite and within bounds) and
+  `describe()`, `NUMERIC_BOUNDS` (income `Bound(0, strict_low=True)`), `MAX_REPORTED_ISSUES`, `required_columns(labeled)`,
+  `binary_columns(labeled)`.
+- `frames.py`: `Findings(issues=(), warnings=())`; check nodes over seeds `history`, `batch`, each returning `Findings`
+  (`columns` raises instead, structure first); `FRAME_CHECK_NODES`; `frame_graph(nodes=FRAME_CHECK_NODES)` appends the
+  consolidation node `report`; `FRAME_CHECKS = frame_graph()`; `FrameReport(history_rows, batch_rows, warnings)`;
+  `validate_frames(history, batch, *, graph=FRAME_CHECKS, workers=4) -> FrameReport`.
+
+### 8.4 Monitoring — `src/monitoring/checks.py`
+- Each check is a node over seeds `history`, `batch`, `decisions`, `reviewed`, `eo_gap_alert`; shared intermediates
+  (`remote`, `references`, proxy AUCs, feature frames) are nodes, so the two proxy AUC fits run concurrently.
+  `CHECK_NODES`, `monitoring_graph(nodes)` appends the consolidation node `checks` (declared order, `None` skipped),
+  `MONITORING`; `run_checks(..., *, graph=MONITORING, workers=4)` keeps its signature and output order.
+- New check `categorical drift, max PSI`: per region, `programme_etudes` and `premiere_generation_universitaire`,
+  categorical PSI, warn > 0.10, alert > 0.25, not correctable. Numeric drift: histogram PSI on `SCORING_FEATURES` only.
+
+### 8.5 Composition — `src/pipelines/` (new package, the gatekeeper)
+- `DECISION_NODES`: `inputs` (adapter read) → `history`, `batch` → `frame_report` (`validate_frames`) →
+  `frame_warnings` (logs each warning) → `record` (`decide`, after `frame_report`) → `written` (adapter write).
+  `PARETO_NODES`: `share` (taken from `record`, so the Pareto branch starts after `decide`), `pareto`, `pareto_written`, all after `frame_report`. `DECISION`, `FULL` graphs;
+  `run_decision(...)`, `run_full(...)`. In `FULL` the Pareto branch and the decision branch run concurrently.
+- Entry points call these; nothing is written when validation fails. `src.evaluation.plot` builds a pyplot-free
+  `Figure` so it is safe off the main thread.
+
+### 8.6 Import direction changes
+`monitoring -> policy, common`; `pipelines -> adapters, harness, evaluation, preprocessing, policy, common`;
+`main.py`, `model_corrige.py` additionally `-> pipelines`. No package imports `pipelines`.
+
+### 8.7 Work packages (Sonnet builders, one writer per file; Opus orchestrates and verifies)
+| WP | Files |
+|---|---|
+| N1 | `src/common/graph.py` |
+| N2 | `src/policy/schema.py`, `src/policy/__init__.py` |
+| N3 | `src/policy/core.py`, `src/policy/models.py` |
+| N4 | `src/evaluation/candidates.py`, `src/evaluation/pareto.py` |
+| N5 | `src/preprocessing/rules.py`, `src/preprocessing/validation.py` |
+| N6 | `src/preprocessing/frames.py`, `src/preprocessing/__init__.py` |
+| N7 | `src/monitoring/checks.py`, `src/monitoring/__init__.py` |
+| N8 | `src/pipelines/decision.py`, `src/pipelines/__init__.py` |
+| N9 | `src/main.py`, `model_corrige.py` |
+| N10 | `scripts/acceptance.py` |
+| N11 | `docs/HARNESS_SPEC.md`, `docs/FINDINGS.md` |

@@ -1,6 +1,6 @@
 # Jury specification (validator jury)
 
-Status: ready for implementation. Replaces the rank-vote jury (`Config.jury_weights`) in `FairPipeline`.
+Status: implemented (HEAD 99d580e). Replaces the rank-vote jury (`Config.jury_weights`) in `FairPipeline`.
 Conforms to `HARNESS_SPEC.md` (§3–5 boundaries, invariants) and `PREPROCESSING_SPEC.md` (scoring features).
 Evidence: §8. Study scripts: session scratchpad `validator_jury_study.py`, `jury_study.py` (not in the repo).
 
@@ -117,3 +117,19 @@ Validator (merit) vs main only: +0.017 ± 0.011 (worst case 2 refs), +0.024 ± 0
 meaningful (two independent merit viewpoints must agree). Stress reference = committee rule with income and hours
 weights reversed, used by no juror. Caveat: the merit juror is also a reference, so merit-reference scores are partly
 self-agreement.
+
+## 9. Implementation notes (divergences from the design above)
+- `validate(main_probability, juror_scores, k, settings, ranking=None)`: `ranking` (default the probability) orders the proposal;
+  triggers and the low-confidence window read the raw probability. Red-team: with shifted triggers the offset correction was sign-inverted.
+  `FairPipeline.decide(df, offset)` passes `probability + offset * is_remote` as `ranking`.
+- `JuryOutcome` has an extra `overturned` mask (all overturns, paired or not). Unpaired overturns keep the proposal and are labelled
+  `overturn_unpaired` in `explanations.csv`.
+- `overturned_out` ties in strength are broken by worse main rank first; `overturned_in` by better main rank first.
+- Non-finite probabilities, ranking or juror scores raise `ValueError`.
+- Tuner skips quorum 0.5 with a single juror (identical to quorum 1.0): 9 configs, not 12.
+- Acceptance adds `jury_offset_monotone`: grants == k at all 41 offsets; remote grants non-decreasing within 2 applicants.
+
+## 10. Open questions (not fixed)
+- Low-confidence window (probability 0.35-0.65) lies below the batch cutoff (p about 0.68), so it only flags refusals.
+- With `quorum` < 1 the swap strength averages in the confirming juror's percentile.
+- Offset on the probability scale has small reach: +0.10 moves about 11 remote grants (587 / 595 / 606 at -0.10 / 0 / +0.10).

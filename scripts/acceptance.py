@@ -595,6 +595,27 @@ def check_jury_record(ctx) -> str:
     return f"triggered={jury['triggered']} overturned_out={jury['overturned_out']} overturned_in={jury['overturned_in']}"
 
 
+def check_jury_offset_monotone(ctx) -> str:
+    from src.harness.controller import OFFSET_GRID
+    from src.policy import is_remote
+
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    remote = is_remote(batch).astype(bool)
+    k = int(round(pipeline.share * len(batch)))
+    grants, remote_grants = {}, {}
+    for offset in OFFSET_GRID:
+        decisions = pipeline.predict(batch, float(offset))
+        grants[round(float(offset), 3)] = int(decisions.sum())
+        remote_grants[round(float(offset), 3)] = int(decisions[remote].sum())
+    wrong = {offset: count for offset, count in grants.items() if count != k}
+    assert not wrong, f"grants != {k}: {wrong}"
+    series = list(remote_grants.values())
+    drops = [(a, b) for a, b in zip(series, series[1:]) if b < a - 2]
+    assert not drops, f"remote grants fall by more than 2: {drops}"
+    assert series[-1] >= series[0], f"remote grants {series[0]} -> {series[-1]} decrease overall"
+    return f"remote grants {remote_grants[-0.1]}/{remote_grants[0.0]}/{remote_grants[0.1]} at -0.10/0/+0.10, grants={k} at {len(grants)} offsets"
+
+
 def check_frame_rejects(ctx) -> str:
     from src.preprocessing import DataValidationError, validate_frames
 
@@ -890,6 +911,7 @@ def main() -> int:
     run_check("jury_region_invariance", check_jury_region_invariance, ctx)
     run_check("jury_determinism", check_jury_determinism, ctx)
     run_check("jury_record", check_jury_record, ctx)
+    run_check("jury_offset_monotone", check_jury_offset_monotone, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} passed in {time.time() - started:.0f}s; failed: {failures}", flush=True)
     shutil.rmtree(tmp, ignore_errors=True)

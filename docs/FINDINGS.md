@@ -41,14 +41,18 @@ Claim: all models 87.9-88.8 % 5-fold CV, noise +-0.6 (R alone 85.7 is the floor)
 | Logistic | 88.74 | 88.76 [R] (committee features + remote, standardized; seeds 0-2: 88.67-88.76) |
 | RF all columns | 88.1 (organizer holdout, [R] 88.13) | 88.42 [R] (300 trees, leaf 1); 87.88 with min_samples_leaf 20 |
 | R score alone | 85.7 | 85.71 [R] |
-| LightGBM tuned 88.66; torch MLP (MPS) 88.26-88.46; stacking 88.76 | sklearn stand-ins: HistGradientBoosting 88.16 [R]; LR+RF+HGB stacking 88.82 [R]; sklearn MLP (64,32) untuned 86.21 [R] | [U] not reproduced: lightgbm and torch not installed |
-Conclusion holds ([R] spread LR to RF 0.3 pt (0.9 with leaf 20), near noise): capacity not the lever; labels biased.
+| LightGBM tuned | 88.66 | 88.73 [R] (fold sd 0.49; nested: 12-combo grid num_leaves 4/8/16 x lr 0.03/0.1 x n_estimators 100/300, inner 3-fold accuracy per outer fold; picks leaves 4-8, lr 0.03 mostly, 300 trees; features = all columns one-hot as RF; subsample/colsample 0.8) |
+| torch MLP (CPU) | 88.26-88.46 (MPS) | 88.51 [R] (fold sd 0.56; 2 hidden 64/32 ReLU, dropout 0.2, standardized all-column inputs, Adam, 15 % validation split, patience 15; seeds 0-2: 88.43 / 88.58 / 88.51) |
+| Stacking LR+RF+LightGBM, LR meta (cv 5) | 88.76 | 88.81 [R] (fold sd 0.65; LR on all-column standardized, RF 300 trees, LightGBM at the fold's tuned params) |
+| Logistic, all-column one-hot (same fold set) | | 88.69 [R] (fold sd 0.57) |
+Scripts: session scratchpad (not in repo); sklearn stand-ins: HistGradientBoosting 88.16 [R]; LR+RF+HGB stacking 88.82 [R]; sklearn MLP (64,32) untuned 86.21 [R].
+Conclusion holds ([R] LR, RF, LightGBM, MLP, stacking all 88.4-88.8, spread 0.4 pt vs fold sd 0.5-0.65; RF leaf 20 87.88): capacity not the lever; labels biased.
 
 ## 4. Reference hypotheses (hidden reference unknown)
 - Merit reference: top R at same budget. Corrected reference: committee rule with regional penalty removed. Both built in src/policy/models.py `reference_labels`; monitor uses both [R].
 - Red-team simulation, pipeline = LR on corrected labels (FairPipeline, no jury, allocate at budget), closure (1 - EO gap/0.270) / scaled utility, 10 splits: committee minus penalty 0.98/0.99 (old 0.99/0.99); merit-only 0.96/0.85 (old 0.88/0.86); merit within programme 0.97/0.85 (old 0.93/0.86) [R] `scaled_utility`, `eo_gap` per reference; closure definition assumed, old closure not reproduced for merit refs.
-- Need-based / distance-hardship references implausible (baseline gap 0.46-0.51 vs brief 0.270) [U] not reproduced: baseline definition unrecoverable; my attempt (RF or historical labels vs lowest-income / top-distance at budget) gives 0.10-0.21.
-- Rank blend 50/50 best worst case; agreement peaks at 40 % grant rate [U; prior rank-vote jury study, superseded by the validator jury, section 5] not reproduced: rank-vote code removed.
+- Need-based / distance-hardship references implausible (baseline gap 0.46-0.51 vs brief 0.270) [U] not reproduced: definition unrecoverable (only docs hold it, first at 4d657c1; no code in any of 32 commits across all refs; searched git log -S hardship / need-based / jury_weights, git grep over every revision). Attempt, 5 splits, reference = top 40 % by lowest income / distance / income+distance / +hours / income+first-gen, baseline = historical labels or production RF at budget, EO gap by remote: 0.17-0.23, never 0.46-0.51; claim unsupported.
+- Rank blend of main model and merit percentiles (old `Config.jury_weights`, code at 99d580e^): 50/50 NOT best worst case; merit weight 0.2 best (0.930), 0.25 0.927, 0.5 0.906, 0.0 0.915, 1.0 0.845 (worst of corrected / merit references, score = (20 closure + 15 scaled utility) / 35, 10 splits, seeds 0-9) [R] old code re-run, superseded by the validator jury section 5. Agreement peaks at 40 % grant rate [R] 50/50 jury at decision share 0.30-0.50 vs references fixed at 39.94 %: 0.963 corrected / 0.964 merit at 0.40 (0.960 at 0.42, 0.952 at 0.36); peak at reference share by construction.
 
 ## 5. 10-split results [R] `OMP_NUM_THREADS=2 uv run python model_corrige.py` (10 splits, exit 0); values from `resultats_pareto.csv`.
 | Method | centre / remote | EO vs corrected (std) | EO vs merit (std) | agree merit | acc hist |

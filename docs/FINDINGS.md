@@ -1,4 +1,4 @@
-# FINDINGS (2026-10-03, HEAD 4d657c1)
+# FINDINGS (2026-10-03, numbers measured at 4d657c1)
 
 Tags: [R] re-run this session (cmd given). [U] unverified, source: prior session (not reproducible without new code). Scratch outputs: /private/tmp/ff/.
 
@@ -18,7 +18,7 @@ Tags: [R] re-run this session (cmd given). [U] unverified, source: prior session
 | Penalty is one flat remote term (distance, sub-region, postal add nothing in-group) | yes | [U] |
 | Full penalty removal natural grant rate | 47.1 % (over budget; allocate to budget) | [U] |
 
-Budget bound 36-44 % (src/policy/core.py:9).
+Budget bound 36-44 % (`BUDGET_BOUNDS` in `src/policy/core.py`).
 
 ## 2. Proxies
 | Item | Value | Tag |
@@ -81,7 +81,7 @@ Monitor on shipped predictions.csv [R]: grant 0.400; DP gap 0.060; EO vs merit 0
 1 Data, groups, Wilson CIs. 2 Baseline reproduction (88.1 %). 3 Why accuracy/TPR vs committee labels mislead. 4 Raw disparity: bootstrap CI (parity gap 0.187, CI 0.154-0.220) + permutation test. 5 Explained vs unexplained: rate by R bin, committee coefficients. 6 Counterfactual flip test, conditional parity (CMH). 7 Proxies: AUC bars, MI, correlation, postal crosstab, drop-column. 8 Model drivers (permutation importance or SHAP). 9 Metric choice: EO vs parity, impossibility. 10 Limitations (synthetic data, unknown reference, label bias, proxy residue).
 
 ## 7. Governance
-Monitoring thresholds (src/monitoring/checks.py:15-21) [R]:
+Monitoring thresholds (threshold constants in `src/monitoring/checks.py`) [R]:
 | Check | Warn | Alert |
 |---|---|---|
 | Grant rate (budget) | outside 36-44 % | same (ALERT) |

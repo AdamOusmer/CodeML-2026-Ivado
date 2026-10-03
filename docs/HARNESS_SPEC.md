@@ -1,4 +1,4 @@
-# Decision harness specification (v3, synced to HEAD 4d657c1)
+# Decision harness specification (v4, synced to 576d28e)
 
 Contract for the controller that wraps the fairness pipeline, decides a batch, audits it, and refuses to
 publish unsafe decisions. "MUST" = contract. "DIVERGENCE:" = code differs from contract; code is the current truth.
@@ -29,7 +29,9 @@ Non-goals
 Budget rule: `share = history["decision_octroi"].mean()` (39.94 % on supplied data, 10,000 rows;
 1,598 grants on 4,000 candidates). MUST be read from data via `policy.core.budget_share`, never hardcoded.
 MUST lie in `BUDGET_BOUNDS = (0.36, 0.44)`, else `ValueError`.
-`decide` raises `ValueError` on a budget outside the bounds or on missing/duplicate `id_candidat`; the CLI reports it in one line, exit 1, no files.
+`decide` raises `InputError` (a `ValueError` subclass) on a budget outside the bounds or on missing/duplicate `id_candidat`.
+CLI handles `InputError`, `DataValidationError`, `FileNotFoundError`, `KeyError` in one line, exit 1, no files; any other exception reaches the generic handler with traceback.
+`KeyError` is still caught (missing CSV column); a required-column check is planned in PREPROCESSING_SPEC `validate_frames`.
 
 ## 3. Module layout and ownership
 | Path | Owns |
@@ -37,17 +39,17 @@ MUST lie in `BUDGET_BOUNDS = (0.36, 0.44)`, else `ValueError`.
 | `src/policy/regions.py` | `REGIONS`, `REMOTE_REGIONS`, `is_remote` (no sklearn) |
 | `src/policy/core.py` | features, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap` |
 | `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
-| `src/evaluation/core.py` | `Candidate`, `evaluate`, `evaluate_split`, `run`, `summarize`, `scaled_utility` |
+| `src/evaluation/core.py` | `Candidate`, `evaluate`, `evaluate_split`, `run`, `summarize`, `scaled_utility` (package-internal) |
 | `src/evaluation/candidates.py` | `default_candidates()`, candidate decide-fns, `pareto_report` (returns table + figure; no file I/O) |
 | `src/evaluation/pareto.py` | `pareto_mask`, `plot` (returns a matplotlib `Figure`; no file I/O) |
 | `src/evaluation/tuner.py` | `SEARCH_SPACE`, `score_split`, `tune` (offline) |
 | `src/monitoring/checks.py` | thresholds, `Check`, `run_checks`, `Verdict`, `verdict`, `overall_status` |
 | `src/explain.py` | `explain` |
-| `src/harness/record.py` | `ActionKind`, `Action`, `DecisionRecord` (data + `summary()`; no file I/O) |
+| `src/harness/record.py` | `InputError`, `ActionKind`, `Action`, `DecisionRecord` (data + `summary()`; no file I/O) |
 | `src/harness/controller.py` | `decide`, `audit`, `fit_offset`, `OFFSET_GRID` |
 | `src/preprocessing/validation.py` | `check-data` validation (own process pool) |
 | `src/common/logging` | logging, `RunContext`, `get_logger` |
-| `src/adapters/files.py` | all project file I/O: `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure` |
+| `src/adapters/files.py` | all project file I/O: `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure`, `json_text` |
 | `src/main.py`, `model_corrige.py` | composition roots / entry points |
 
 `src/policy/__init__.py` MUST NOT import sklearn eagerly (validation subprocesses load `REGIONS` without it):
@@ -62,13 +64,14 @@ Each package exposes its public API in `__init__.py` with `__all__`. Code outsid
 | `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `legitimate_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
 | `src.monitoring` | `EO_GAP_ALERT`, `Check`, `Verdict`, `run_checks`, `verdict`, `overall_status` |
 | `src.explain` | `explain` |
-| `src.evaluation` | `Candidate`, `run`, `summarize`, `scaled_utility`, `SEARCH_SPACE`, `tune`, `pareto_mask`, `plot`, `default_candidates`, `ParetoReport`, `pareto_report` |
-| `src.harness` | `decide`, `DecisionRecord`, `Action`, `ActionKind` |
+| `src.evaluation` | `SEARCH_SPACE`, `tune`, `ParetoReport`, `pareto_report` |
+| `src.harness` | `decide`, `InputError`, `DecisionRecord`, `Action`, `ActionKind` |
 | `src.preprocessing` | `validate_datasets`, `DatasetReport`, `DataValidationError` |
-| `src.adapters` | `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure` |
+| `src.adapters` | `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure`, `json_text` |
 | `src.common.logging` | unchanged |
 
-Builders MAY add a name to `__all__` when an existing caller needs it; they MUST NOT import past it.
+Export rule: `__all__` lists names used outside the package, types its public functions return, and domain constants. Internals stay out.
+Builders MAY add a name to `__all__` when a caller outside the package needs it; they MUST NOT import past it.
 
 Dependency direction (arrow = may import):
 ```
@@ -87,6 +90,8 @@ Forbidden: importing `main`, `model_corrige` or `adapters` from any package; `mo
 File I/O (`read_csv`, `to_csv`, `savefig`, `write_text`, `open`) only in `src/adapters/`, `src/main.py`
 (argument parsing, stdout JSON), `src/common/logging` (log files) and `src/preprocessing/validation.py`
 (streams the input CSVs it validates). Domain code returns data and figures.
+The scanner also flags I/O calls `dump`, `to_json`, `to_parquet`, `to_pickle`, `save`, `savetxt`, `mkdir`, `write_bytes`, `unlink`, `rmtree` (plus the above and `read_text`, `read_bytes`) outside those files.
+Import scan also catches submodule-name imports (`from src.policy import core`), `import_module` / `__import__` (except the `src/policy/__init__.py` lazy loader), and `src.<pkg>.<module>` attribute chains.
 No abstract port classes: one filesystem adapter, plain functions. Add a Protocol only when a second backend exists.
 Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forbidden edge into a temp copy).
 
@@ -97,13 +102,13 @@ Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forb
 | I2 | Default scoring never reads `region_administrative`, `code_postal_3`, `distance_domicile_campus_km`; offset 0 => `score` = jury score | `legitimate_features`, `FairPipeline.score` |
 | I3 | Region enters a decision only via `ADJUST_OFFSET`, abs(offset) <= 0.10, recorded; training labels use removal = 1.0 | `fit_offset` grid, `DecisionRecord` |
 | I4 | Same history + batch => identical decisions, scores, record (record has no timestamps) | no RNG in decide path, stable sorts, deterministic LR |
-| I5 | Blocked run never writes `predictions.csv` | `DecisionRecord.write` publishes only if `status == "published"` |
+| I5 | Blocked run never writes `predictions.csv` | `src.adapters.write_decision` writes `predictions.csv` only if `record.published` |
 | I6 | Every harness action is one of `ActionKind` and appears in `record.actions` | `controller.decide` |
 | I7 | Decisions are never fed back as training data; fit uses `history` only | `FairPipeline.fit(history)` |
 | I8 | Tuner never changes live config; `DECLARED_CONFIG` is edited by the team only | `tuner.py` output is CSV only; nothing imports it into `decide` |
 
-DIVERGENCE (I3): bound is enforced only by `OFFSET_GRID = linspace(-0.10, 0.10, 41)` (`controller.py:14`).
-`FairPipeline.score/predict` accept any offset (`models.py:58`). Callers other than `fit_offset` can exceed it.
+DIVERGENCE (I3): bound is enforced only by `controller.OFFSET_GRID = linspace(-0.10, 0.10, 41).round(3)`.
+`FairPipeline.score` and `FairPipeline.predict` accept any offset. Callers other than `fit_offset` can exceed it.
 
 I5 in practice: `src.adapters.write_decision` always writes `decision_record.json` and `explanations.csv` (the
 audit trail of a blocked run) and writes `predictions.csv` only when published; an earlier file stays byte-identical.
@@ -111,7 +116,7 @@ audit trail of a blocked run) and writes `predictions.csv` only when published; 
 ## 6. Actions and flow
 | Kind | Params (as coded) | When |
 |---|---|---|
-| `SELECT_CONFIG` | `{config: name}` | once, first (`controller.py:44`) |
+| `SELECT_CONFIG` | `{config: name}` | once, first (`controller.decide`) |
 | `ADJUST_OFFSET` | `{offset, moved: count, alerts: [check names]}` | first verdict ALERT, every ALERT check `correctable`, and `fit_offset` != 0 |
 | `BLOCK` | `{checks, suggestion}` | final verdict ALERT |
 
@@ -124,12 +129,12 @@ FIT -> DECIDE(offset 0) -> AUDIT --OK/WARN--> PUBLISH
 - `BLOCK.suggestion` = `MERIT_ONLY_SUGGESTION` text for humans; the harness MUST NOT apply it.
 - Moved ids go in `record.moved_ids`; gaps before/after are readable from `verdicts[0]` vs `verdicts[1]`.
 - DIVERGENCE: `SELECT_CONFIG` carries no Pareto evidence; `ADJUST_OFFSET.params` has `moved` count and `alerts`,
-  not gaps or ids (`controller.py:44,55-56`). Earlier spec listed evidence, gaps, ids.
+  not gaps or ids (`controller.decide`). Earlier spec listed evidence, gaps, ids.
 - If `fit_offset` returns 0, no `ADJUST_OFFSET` is recorded; the run goes straight to BLOCK with reason
   "no offset in the allowed grid lowers the gap".
 - A check whose metric cannot be computed (NaN, empty subgroup, single class) is a non-correctable ALERT, so it blocks.
 
-Corrector (`fit_offset`): over `OFFSET_GRID` (41 points, [-0.10, 0.10]) pick the offset minimizing the larger
+Corrector (`fit_offset`): over `OFFSET_GRID` (41 points, [-0.10, 0.10], rounded to 3 decimals) pick the offset minimizing the larger
 of the `eo_gap` vs `corrected` and vs `merit` (alerts fire on each gap); key `(round(max gap, 3), abs(offset), -offset)`,
 so ties prefer the smaller and then the positive offset. A NaN gap scores infinity.
 Offset is added to the jury score of remote-region applicants (`is_remote`), then `allocate` at the same budget.
@@ -161,7 +166,7 @@ model_vote, offset` (offset x remote flag), `factor_1..3` (`"<feature> <+x.xx>"`
 
 `DecisionRecord` fields: `config, share, status ("published"|"blocked"), ids, decisions, scores, offset, verdicts,
 actions, moved_ids, explanations, region_rates, input_hashes` (sha256 per input file name).
-`write(out_dir)` always writes `decision_record.json` (`summary()`: status, config, share, grants, applicants, offset,
+`src.adapters.write_decision(record, out_dir)` always writes `decision_record.json` (strict JSON via `src.adapters.json_text`: non-finite floats become null; `summary()`: status, config, share, grants, applicants, offset,
 actions, verdicts with checks, moved_ids, region_rates, input_hashes) and `explanations.csv`;
 writes `predictions.csv` (`id_candidat, decision_octroi`) only when published (I5).
 Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
@@ -170,24 +175,30 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 - `check-data`, `monitor --history --batch --decisions [--reviewed] [--json]`, `decide --history --batch --out-dir [--json]`,
   `pareto --splits --workers --out-dir`, `tune --splits(5) --workers --out-dir`.
 - Exit: 0 OK/published; 3 (`EXIT_ALERT`) monitor ALERT or decide blocked; 1 error; 2 bad arguments; 130 interrupted.
-- `model_corrige.py`: `budget_share` -> `pareto_report` (10 splits, 4 workers) -> `decide` -> `record.write(ROOT)`;
+- `model_corrige.py`: `budget_share` -> `pareto_report` (10 splits, 4 workers) -> `decide` -> `write_decision(record, ROOT)`;
   exit 3 if blocked. Same artifacts as `decide`.
 - `decide(history, batch, input_hashes, config=DECLARED_CONFIG, eo_gap_alert=EO_GAP_ALERT) -> DecisionRecord` is pure:
   no file I/O, no printing; logs through `get_logger("harness")`.
-  DIVERGENCE: earlier spec gave a `workers` parameter; code has none (`controller.py:41`).
+  DIVERGENCE: earlier spec gave a `workers` parameter; code has none (`controller.decide`).
 
 ## 11. Acceptance checks
-- 4,000 rows, 1,598 grants (39.94 %), `offset == 0`, no `ADJUST_OFFSET`, status `published`; share read from data.
-- Budget guard: history rate outside 36-44 % => `ValueError`, no output.
-- Forced correctable ALERT (`eo_gap_alert` lowered, or remote jury scores shifted by -0.10) => `ADJUST_OFFSET` recorded,
-  abs(offset) <= 0.10, `moved_ids` non-empty, grants still `round(share x n)`.
-- Non-correctable ALERT (feature drift, e.g. a feature shifted so PSI > 0.25) => `BLOCK` without `ADJUST_OFFSET`, exit 3.
-- ALERT after correction => `BLOCK`, exit 3; pre-existing `predictions.csv` byte-identical (I5).
-- Replay twice => identical `predictions.csv`, `explanations.csv`, `decision_record.json` (I4).
-- No proxy column read in default scoring: `score(df, 0)` identical when region/postal/distance columns are shuffled (I2).
-- Offset-0 `explain` factors sum with intercept to `main_model_` `decision_function` within 1e-9.
-- Boundaries in section 4 hold (`scripts/acceptance.py` AST scan, proven on an injected forbidden edge); `from src.policy import REGIONS` loads no sklearn.
-- `tune` and `pareto` write only their CSV/PNG; `decide` output unchanged by running them (I8).
+`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` runs 19 checks, all PASS:
+1. `baseline`: 4,000 rows, 1,598 grants (39.94 %), `published`, no `ADJUST_OFFSET`, strict-JSON record, ids in batch order; share read from data.
+2. `budget_guard`: history rate outside 36-44 % => exit 1, one ERROR line, no traceback, no files.
+3. `duplicate_id`: duplicated `id_candidat` => exit 1, no traceback, no files.
+4. `forced_correctable_alert`: `eo_gap_alert=0.015` => `ADJUST_OFFSET`, abs(offset) <= 0.10, `moved_ids` non-empty, grants = `round(share x n)`.
+5. `zero_offset_block`: `fit_offset` patched to 0 => actions `[SELECT_CONFIG, BLOCK]`, reason `NO_OFFSET_REASON`, one verdict.
+6. `drift_block`: `cote_r_equivalent` + 3 => exit 3, `blocked`, no `ADJUST_OFFSET`, BLOCK lists "feature drift, max PSI", pre-existing `predictions.csv` byte-identical (I5).
+7. `categorical_drift`: `premiere_generation_universitaire` all 0 => exit 3, non-correctable PSI ALERT, no `ADJUST_OFFSET`.
+8. `uncomputable_metric_block`: remote-only batch => exit 3, non-correctable ALERT with null value, no `ADJUST_OFFSET`.
+9. `alert_after_correction`: `eo_gap_alert=-1.0` => `ADJUST_OFFSET` then `BLOCK`, `blocked`, sentinel `predictions.csv` intact (I5).
+10. `replay`: two runs => identical `predictions.csv`, `explanations.csv`, `decision_record.json` (I4).
+11. `region_blindness`: `score(df, 0)` identical when region/postal/distance columns are shuffled (I2).
+12. `tuner_not_live`: `tune` writes only `resultats_tuner.csv`; `decide` output unchanged after it (I8).
+13-16. `boundaries_deep_imports`, `boundaries_direction`, `boundaries_third_party`, `boundaries_file_io`: section 4 AST scan on the repo has no violations.
+17. `boundaries_policy_lazy`: `from src.policy import REGIONS` loads no sklearn.
+18. `boundaries_proof`: scanner catches injected violations in a temp copy and passes an allowed edge. Probes: deep import, wrong direction, `to_csv`, `json.dump`, `Path.mkdir`, `from src.policy import core`, `import_module`, `__import__`, `src.policy.core` attribute chain; allowed `from src.policy import eo_gap` stays clean.
+19. `explain_identity`: offset-0 `explain` factors plus intercept equal `main_model_` `decision_function` within 1e-9; required columns present.
 
 ## 12. Open risks
 - Declared 50/50 jury rests on red-team simulation, not the hidden reference.

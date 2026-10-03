@@ -1,8 +1,6 @@
 # Handoff for the implementing orchestrator
 
-Revision verified: `4d657c1` on `main`. Working tree clean (`git status --short` empty); `data/` and `logs/` git-ignored.
-Remote `origin/main` = `5a126b2` only; local is ahead 7 (`git branch -vv`, no fetch done). Push needs user approval.
-Remote repo `AdamOusmer/CodeML-2026-Ivado` (private) — from prior session, unverified here.
+Branch state: PR AdamOusmer/CodeML-2026-Ivado#1, branch `feat/decision-harness`; `origin/main` = `4d657c1`. Opus review fixes included (acceptance 19/19). `data/` and `logs/` git-ignored.
 
 Read first: [`HARNESS_SPEC.md`](HARNESS_SPEC.md) (design contract), [`FINDINGS.md`](FINDINGS.md) (verified numbers; not repeated here).
 Original brief: `README.md` (top), `consignes-fr.pdf`.
@@ -16,16 +14,16 @@ Deliverables (repo root): `predictions.csv` done, `model_corrige.py` + Pareto pl
 
 ## 1. Current state
 
-Tags: [R] = reproduced this session at `4d657c1` with command shown. [U] = unverified (prior session).
+Tags: [R] = reproduced at `4d657c1` (before `576d28e`) with command shown. [U] = unverified (prior session).
 
 | Area | Path | State | Evidence |
 |---|---|---|---|
-| Domain policy | `src/policy/{regions,core,models}.py` | done | `DECLARED_CONFIG = Config("jury 50/50")` (`models.py:19`) [R, grep]. Output identical pre/post extraction except 6 decisions (offset removed by design) [U] |
-| Evaluation core/pareto/tuner/candidates | `src/evaluation/{core,pareto,tuner,candidates}.py` | done | `candidates.py:89` registers declared pipeline [R, grep]. `--help` lists `pareto`, `tune` [R]. `pareto --splits 10` 31 s, `tune --splits 10` exit 0 [R, FINDINGS §5] |
+| Domain policy | `src/policy/{regions,core,models}.py` | done | `DECLARED_CONFIG = Config("jury 50/50")` (`src/policy/models.py`) [R, grep]. Output identical pre/post extraction except 6 decisions (offset removed by design) [U] |
+| Evaluation core/pareto/tuner/candidates | `src/evaluation/{core,pareto,tuner,candidates}.py` | done | `default_candidates` registers declared pipeline [R, grep]. `--help` lists `pareto`, `tune` [R]. `pareto --splits 10` 31 s, `tune --splits 10` exit 0 [R, FINDINGS §5] |
 | Monitoring | `src/monitoring/checks.py` | done | `monitor --plain --no-log-file` exit 0, overall WARN: only impact ratio 0.795 (<0.8) warns; budget 0.400 (1,598/4,000), EO vs corrected 0.022, drift OK [R]. Forced ALERT correctable=True / drift ALERT correctable=False [U] |
 | Explanations | `src/explain.py` | done (Codex) | `decide` wrote `explanations.csv` [R]. Logit identity max err 1.4e-14 [U] |
-| Harness | `src/harness/{record,controller}.py` | done, partial | `decide` exit 0: "published; 1598 of 4000 granted; wrote decision_record.json, explanations.csv, predictions.csv"; log "SELECT_CONFIG: declared configuration jury 50/50" [R]. Correction and block paths NOT exercised (WP8) |
-| CLI | `src/main.py` | done | `--help` exit 0, commands `check-data monitor decide pareto tune`; flags `-v -q --plain --no-progress --log-dir --no-log-file` [R]. `check-data` exit 0 [R]. `monitor --reviewed CSV` still present (`main.py:72`) |
+| Harness | `src/harness/{record,controller}.py` | done, partial | `decide` exit 0: "published; 1598 of 4000 granted; wrote decision_record.json, explanations.csv, predictions.csv"; log "SELECT_CONFIG: declared configuration jury 50/50" [R]. Correction and block paths exercised by `scripts/acceptance.py` (19/19) |
+| CLI | `src/main.py` | done | `--help` exit 0, commands `check-data monitor decide pareto tune`; flags `-v -q --plain --no-progress --log-dir --no-log-file` [R]. `check-data` exit 0 [R]. `monitor --reviewed CSV` still present (`src/main.py`, `--reviewed`) |
 | Deliverable | `model_corrige.py` (thin; imports `pareto_report`, `decide`) | done | Not re-run this session (writes repo-root files). Prior: 1,598 grants, 39.95 %, exit 0 [U]. Equivalent `decide` output checked below [R] |
 | Data validation | `src/preprocessing/validation.py` | done | `check-data` exit 0, regional counts table printed [R]. Parallel, 0.16 s [U] |
 | Logging | `src/common/logging/runtime.py` | done | each CLI run writes timestamped file in `logs/` unless `--no-log-file` [R] |
@@ -65,13 +63,13 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 | WP | Task | Model | Depends | Done when |
 |---|---|---|---|---|
 | 7 | ✅ Done: Codex gpt-6.1-sol + Fable review of `5a126b2..HEAD`; all P1/P2 fixed (fit_offset max-gap objective, NaN metrics → blocking ALERT, binary PSI, qcut edges, id validation, clean ValueError exit) | Codex + Fable | — | done |
-| 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → 16/16 PASS in 9 s (baseline, budget guard, duplicate id, correction, drift BLOCK + I5 sentinel, I4 replay, I2, I8, explain identity, §4 boundaries with injected-edge proof) | Sonnet | 7 | done |
+| 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → 19/19 PASS (baseline, budget guard, duplicate id, forced correction, zero-offset BLOCK, numeric and categorical drift BLOCK + I5 sentinel, uncomputable-metric BLOCK, alert after correction, I4 replay, I2, I8, §4 boundaries incl. policy-lazy and injected-edge proof with 9 probes, explain identity); see HARNESS_SPEC §11 | Sonnet | 7 | done |
 | 9 | Choose `DECLARED_CONFIG`: `tune --splits 10`, present table, user picks (10 splits: worst case merit 0.25 = 0.929 vs current 50/50 = 0.904, FINDINGS §5) | Opus presents, user decides | — | user choice written in `HARNESS_SPEC.md` and `models.py` matches |
 | 10 | `audit_rapport.ipynb` (10-section outline in FINDINGS §6), sklearn only, no statsmodels | Sonnet | — | `jupyter nbconvert --execute` runs top to bottom on `data/`, exit 0, no errors in cells |
 | 11 | README: replace top with our solution, commands, artifacts; keep organizer brief below | Sonnet | 8 | every command in README run once, exit 0 |
 | 12 | Monitoring plan (governance) in README or `docs/MONITORING_PLAN.md`: per check in `checks.py` — metric, threshold, owner, action on WARN/ALERT, cadence, how BLOCK is lifted, Law 25 reference only if verified | Fable draft, Sonnet edit | 8 | every threshold matches `checks.py` (grep-checked); each check has owner + action; one page max; user reads it |
 | 13 | `presentation.pdf`, 5-minute pitch | Fable narrative | 10 | PDF renders; ≤ 5 min script; numbers match FINDINGS |
-| 14 | Cleanup: delete stale `resultats_stabilite.csv` (still in root; no longer produced — [R] `ls`); decide whether to drop `monitor --reviewed`; update spec for `src/evaluation/candidates.py` | Sonnet | — | stale file gone; decision on `--reviewed` recorded; spec lists candidates module |
+| 14 | Cleanup: delete stale `resultats_stabilite.csv` (still in root; no longer produced — [R] `ls`); decide whether to drop `monitor --reviewed` | Sonnet | — | stale file gone; decision on `--reviewed` recorded |
 | 15 | Push to GitHub | user approval required | all | user approves target; remote head = local head |
 
 ## 5. Working rules
@@ -92,8 +90,8 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 - Monitor WARN on real batch: impact ratio 0.795, Cote-Nord 33.8 % vs Capitale-Nationale 42.5 % [R].
 - Percentile votes depend on batch cohort.
 - Law 25 article number (12.1) unverified; verify before citing.
-- `model_corrige.py` not re-run at `4d657c1` (writes repo-root files).
-- Spec divergences (HARNESS_SPEC `DIVERGENCE:` lines): `fit_offset` can return 0 → identical re-audit → BLOCK; blocked run leaves an earlier `predictions.csv` on disk; offset bound enforced only by `OFFSET_GRID`, not by `FairPipeline`.
+- `model_corrige.py` not re-run at `576d28e` (writes repo-root files).
+- Spec divergences (HARNESS_SPEC `DIVERGENCE:` lines): `fit_offset` can return 0 → direct BLOCK, no `ADJUST_OFFSET`; blocked run leaves an earlier `predictions.csv` on disk; offset bound enforced only by `OFFSET_GRID`, not by `FairPipeline`.
 - Missing deliverables: `audit_rapport.ipynb`, `presentation.pdf`.
 - `logs/` accumulates one file per CLI run (ignored by git).
 

@@ -56,4 +56,7 @@ def logistic_regression():
 
 def eo_gap(decisions, y_ref, remote):
     deserving = y_ref == 1
-    return abs(decisions[deserving & (remote == 0)].mean() - decisions[deserving & (remote == 1)].mean())
+    centre, far = deserving & (remote == 0), deserving & (remote == 1)
+    if not (centre.any() and far.any()):
+        return np.nan
+    return abs(decisions[centre].mean() - decisions[far].mean())

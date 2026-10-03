@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.policy.core import percentile
-from src.policy.regions import is_remote
+from src.policy import is_remote, percentile
 
 
 def explain(pipeline, df, decisions, scores, offset, top=3):

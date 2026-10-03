@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from src.monitoring.checks import Verdict
-from src.policy.models import Config
+from src.monitoring import Verdict
+from src.policy import Config
+
+
+class InputError(ValueError):
+    pass
 
 
 class ActionKind(str, Enum):
@@ -60,14 +62,5 @@ class DecisionRecord:
             "input_hashes": self.input_hashes,
         }
 
-    def write(self, out_dir: Path) -> list[Path]:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        record_path, explanations_path = out_dir / "decision_record.json", out_dir / "explanations.csv"
-        record_path.write_text(json.dumps(self.summary(), indent=2, default=float))
-        self.explanations.to_csv(explanations_path, index=False)
-        written = [record_path, explanations_path]
-        if self.published:
-            predictions_path = out_dir / "predictions.csv"
-            pd.DataFrame({"id_candidat": self.ids, "decision_octroi": self.decisions}).to_csv(predictions_path, index=False)
-            written.append(predictions_path)
-        return written
+    def predictions(self) -> pd.DataFrame:
+        return pd.DataFrame({"id_candidat": self.ids, "decision_octroi": self.decisions})

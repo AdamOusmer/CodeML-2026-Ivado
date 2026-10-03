@@ -5,8 +5,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from src.policy.core import allocate, legitimate_features, logistic_regression, percentile
-from src.policy.regions import is_remote
+from .core import allocate, legitimate_features, logistic_regression, percentile
+from .regions import is_remote
 
 
 @dataclass(frozen=True)

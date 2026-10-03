@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import sys
 from pathlib import Path
 
 from rich.table import Table
 
 from src.common.logging import RunContext, configure_logging
-from src.preprocessing.validation import REGIONS, DatasetReport, DataValidationError, validate_datasets
+from src.harness import InputError
+from src.policy import REGIONS
+from src.preprocessing import DatasetReport, DataValidationError, validate_datasets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HISTORY = PROJECT_ROOT / "data/donnees_demandes.csv"
@@ -127,24 +127,25 @@ def run_check_data(args: argparse.Namespace, run: RunContext, quiet: bool) -> in
                                 train_rows=args.expected_train_rows,
                                 evaluation_rows=args.expected_evaluation_rows)
     if args.json:
-        print(json.dumps({"valid": True, "historical": reports[0].to_dict(),
-                          "evaluation": reports[1].to_dict()}, indent=2))
+        from src.adapters import json_text
+
+        print(json_text({"valid": True, "historical": reports[0].to_dict(), "evaluation": reports[1].to_dict()}))
     elif not quiet:
         show_summary(reports, run)
     return 0
 
 
 def load_batch(args: argparse.Namespace):
-    import pandas as pd
+    from src.adapters import read_decisions, read_table
 
-    history, batch = pd.read_csv(args.history), pd.read_csv(args.batch)
-    decisions = pd.read_csv(args.decisions).set_index("id_candidat")["decision_octroi"]
+    history, batch = read_table(args.history), read_table(args.batch)
+    decisions = read_decisions(args.decisions)
     missing = set(batch["id_candidat"]) - set(decisions.index)
     if missing:
         raise DataValidationError(f"{args.decisions.name}: no decision for {len(missing):,} batch applicants")
     reviewed = None
     if args.reviewed is not None:
-        reviewed = pd.read_csv(args.reviewed).set_index("id_candidat")["merite"].reindex(batch["id_candidat"])
+        reviewed = read_table(args.reviewed).set_index("id_candidat")["merite"].reindex(batch["id_candidat"])
     return history, batch, decisions.reindex(batch["id_candidat"]).to_numpy(), reviewed
 
 
@@ -164,34 +165,30 @@ def show_checks(checks, status: str, run: RunContext) -> None:
 
 
 def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    from src.monitoring.checks import overall_status, run_checks
+    from src.adapters import json_text
+    from src.monitoring import overall_status, run_checks
 
     with run.stage("Monitoring decisions"):
         history, batch, decisions, reviewed = load_batch(args)
         checks = run_checks(history, batch, decisions, reviewed)
     status = overall_status(checks)
     if args.json:
-        print(json.dumps({"status": status, "checks": [check.to_dict() for check in checks]}, indent=2))
+        print(json_text({"status": status, "checks": [check.to_dict() for check in checks]}))
     elif not quiet:
         show_checks(checks, status, run)
     return EXIT_ALERT if status == "ALERT" else 0
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    import pandas as pd
-
-    from src.harness.controller import decide
+    from src.adapters import json_text, read_inputs, write_decision
+    from src.harness import decide
 
     with run.stage("Deciding"):
-        history, batch = pd.read_csv(args.history), pd.read_csv(args.batch)
-        record = decide(history, batch, {path.name: sha256(path) for path in (args.history, args.batch)})
-        written = record.write(args.out_dir)
+        inputs = read_inputs(args.history, args.batch)
+        record = decide(inputs.history, inputs.batch, inputs.hashes)
+        written = write_decision(record, args.out_dir)
     if args.json:
-        print(json.dumps(record.summary(), indent=2, default=float))
+        print(json_text(record.summary()))
     elif not quiet:
         show_checks(record.verdicts[-1].checks, record.verdicts[-1].status, run)
         for action in record.actions:
@@ -202,29 +199,29 @@ def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
 
 
 def run_pareto(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    import pandas as pd
-
-    from src.evaluation.candidates import pareto_report
-    from src.policy.core import budget_share
+    from src.adapters import read_table, save_figure, write_table
+    from src.evaluation import pareto_report
+    from src.policy import budget_share
 
     with run.stage(f"Evaluating candidates over {args.splits} splits"):
-        history = pd.read_csv(args.history)
-        report = pareto_report(history, budget_share(history), args.splits, args.workers, args.out_dir)
+        history = read_table(args.history)
+        report = pareto_report(history, budget_share(history), args.splits, args.workers)
+        write_table(report.summary, args.out_dir / "resultats_pareto.csv")
+        save_figure(report.figure, args.out_dir / "pareto_front.png")
     if not quiet:
-        print(report.round(3).to_string(index=False))
+        print(report.table.round(3).to_string(index=False))
     return 0
 
 
 def run_tune(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
-    import pandas as pd
-
-    from src.evaluation.tuner import SEARCH_SPACE, tune
-    from src.policy.core import budget_share
+    from src.adapters import read_table, write_table
+    from src.evaluation import SEARCH_SPACE, tune
+    from src.policy import budget_share
 
     with run.stage(f"Tuning {len(SEARCH_SPACE)} configurations over {args.splits} splits"):
-        history = pd.read_csv(args.history)
+        history = read_table(args.history)
         table = tune(history, budget_share(history), SEARCH_SPACE, args.splits, args.workers)
-        table.to_csv(args.out_dir / "resultats_tuner.csv", index=False)
+        write_table(table, args.out_dir / "resultats_tuner.csv")
     if not quiet:
         print(table.round(3).to_string(index=False))
     return 0
@@ -259,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         if run.log_path is not None:
             run.logger.info("Log: %s", run.log_path)
         return exit_code
-    except (DataValidationError, FileNotFoundError, KeyError) as exc:
+    except (DataValidationError, FileNotFoundError, KeyError, InputError) as exc:
         run.logger.error("%s", exc)
         run.logger.debug("Validation error details", exc_info=True)
         return 1

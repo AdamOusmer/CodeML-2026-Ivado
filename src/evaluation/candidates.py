@@ -1,17 +1,26 @@
-from pathlib import Path
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from fairlearn.postprocessing import ThresholdOptimizer
 from fairlearn.reductions import ExponentiatedGradient, TruePositiveRateParity
+from matplotlib.figure import Figure
 from sklearn.ensemble import RandomForestClassifier
 
-from src.evaluation.core import Candidate, run, summarize
-from src.evaluation.pareto import pareto_mask, plot
-from src.evaluation.tuner import SEARCH_SPACE
-from src.policy.core import allocate, legitimate_features, logistic_regression, production_features
-from src.policy.models import DECLARED_CONFIG, CommitteeModel, FairPipeline
-from src.policy.regions import is_remote
+from src.policy import (
+    DECLARED_CONFIG,
+    CommitteeModel,
+    FairPipeline,
+    allocate,
+    is_remote,
+    legitimate_features,
+    logistic_regression,
+    production_features,
+)
+
+from .core import Candidate, run, summarize
+from .pareto import pareto_mask, plot
+from .tuner import SEARCH_SPACE
 
 SEED = 42
 EXPGRAD_BOUNDS = [0.30, 0.20, 0.10, 0.05, 0.02, 0.01]
@@ -90,9 +99,14 @@ def default_candidates() -> list[Candidate]:
     ]
 
 
-def pareto_report(history: pd.DataFrame, share: float, splits: int, workers: int, out_dir: Path) -> pd.DataFrame:
+@dataclass(frozen=True)
+class ParetoReport:
+    summary: pd.DataFrame
+    table: pd.DataFrame
+    figure: Figure
+
+
+def pareto_report(history: pd.DataFrame, share: float, splits: int, workers: int) -> ParetoReport:
     summary = summarize(run(history, default_candidates(), share, splits, workers))
     summary["pareto"] = pareto_mask(summary, *PANELS[1])
-    summary.to_csv(out_dir / "resultats_pareto.csv", index=False)
-    plot(summary, PANELS, out_dir / "pareto_front.png", splits)
-    return summary[REPORT_COLUMNS]
+    return ParetoReport(summary, summary[REPORT_COLUMNS], plot(summary, PANELS, splits))

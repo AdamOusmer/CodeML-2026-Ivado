@@ -1,8 +1,7 @@
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 LABELS = {
     "eo_gap_corrected": "Equal-opportunity gap vs corrected labels (committee minus regional penalty)",
@@ -25,7 +24,7 @@ def pareto_mask(summary: pd.DataFrame, x: str, y: str) -> np.ndarray:
     return eligible & ~np.array(dominated)
 
 
-def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], path: Path, splits: int) -> None:
+def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], splits: int) -> Figure:
     fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 5), squeeze=False)
     curves = [family for family in summary["family"].unique() if family not in POINT_STYLES]
     for ax, (x, y) in zip(axes[0], panels):
@@ -43,5 +42,4 @@ def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], path: Path, split
     axes[0][0].legend(loc="lower right", fontsize=8)
     fig.suptitle(f"Fairness vs utility, mean ± std over {splits} splits, every method at the same budget except the anchor")
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    return fig

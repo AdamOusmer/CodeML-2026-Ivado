@@ -5,10 +5,8 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.evaluation.core import scaled_utility
-from src.policy.core import allocate, eo_gap
-from src.policy.models import CommitteeModel, Config, FairPipeline, reference_labels
-from src.policy.regions import is_remote
+from .core import scaled_utility
+from src.policy import CommitteeModel, Config, FairPipeline, allocate, eo_gap, is_remote, reference_labels
 
 REFERENCES = ("corrected", "merit")
 EQUITY_WEIGHT, UTILITY_WEIGHT = 20, 15

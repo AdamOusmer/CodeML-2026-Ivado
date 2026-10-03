@@ -183,7 +183,7 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 - Replay twice => identical `predictions.csv`, `explanations.csv`, `decision_record.json` (I4).
 - No proxy column read in default scoring: `score(df, 0)` identical when region/postal/distance columns are shuffled (I2).
 - Offset-0 `explain` factors sum with intercept to `main_model_` `decision_function` within 1e-9.
-- Import graph in section 4 holds (grep; no cycle; `policy/__init__.py` empty).
+- Boundaries in section 4 hold (`scripts/acceptance.py` AST scan, proven on an injected forbidden edge); `from src.policy import REGIONS` loads no sklearn.
 - `tune` and `pareto` write only their CSV/PNG; `decide` output unchanged by running them (I8).
 
 ## 12. Open risks

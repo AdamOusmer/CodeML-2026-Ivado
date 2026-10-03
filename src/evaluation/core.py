@@ -7,9 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.policy.core import BUDGET_BOUNDS, eo_gap
-from src.policy.models import reference_labels
-from src.policy.regions import is_remote
+from src.policy import BUDGET_BOUNDS, eo_gap, is_remote, reference_labels
 
 Decide = Callable[[pd.DataFrame, pd.DataFrame, float], np.ndarray]
 METRICS = ["grant_rate", "rate_centre", "rate_remote", "dp_gap", "eo_gap_corrected", "eo_gap_merit",

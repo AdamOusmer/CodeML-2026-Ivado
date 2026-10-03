@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from src.common.logging import RunContext
-from src.policy.regions import REGIONS
+from src.policy import REGIONS
 
 FEATURE_COLUMNS = (
     "id_candidat", "cote_r_equivalent", "programme_etudes", "region_administrative",

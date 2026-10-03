@@ -501,11 +501,121 @@ def check_explain_identity(ctx) -> str:
     expected = model.decision_function(scoring_features(batch))
     error = float(np.max(np.abs(reconstructed - expected)))
     assert error < 1e-9, f"max abs err {error:.3g}"
-    decisions = pipeline.predict(batch)
-    table = explain(pipeline, batch, decisions, pipeline.score(batch, 0.0), 0.0)
-    needed = {"id_candidat", "decision", "score", "merit_vote", "model_vote", "offset", "factor_1", "factor_2", "factor_3"}
+    outcome = pipeline.decide(batch)
+    table = explain(pipeline, batch, outcome, pipeline.score(batch, 0.0), 0.0)
+    needed = {"id_candidat", "decision", "score", "merit_vote", "model_vote", "offset", "factor_1", "factor_2", "factor_3",
+              "validated", "trigger_reasons", "juror_votes", "jury_outcome"}
     assert needed <= set(table.columns), f"missing columns {needed - set(table.columns)}"
     return f"max abs err {error:.2e}"
+
+
+def fitted_pipeline(ctx):
+    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+
+    if "pipeline" not in ctx:
+        ctx["pipeline"] = FairPipeline(DECLARED_CONFIG, budget_share(ctx["history"])).fit(ctx["history"])
+    return ctx["pipeline"]
+
+
+def jury_variants() -> dict:
+    from dataclasses import replace
+
+    from src.policy import JurySettings
+
+    default = JurySettings()
+    return {
+        "default": default,
+        "band0": replace(default, band=0.0),
+        "zero_triggers": replace(default, band=0.0, disagree=1.0),
+        "quorum_half": replace(default, quorum=0.5),
+        "merit_only": replace(default, jurors=("merit",)),
+    }
+
+
+def jury_outcomes(ctx) -> tuple[dict, int]:
+    from src.policy import validate
+
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    probability = pipeline.score(batch, 0.0)
+    jurors = pipeline.juror_scores(batch)
+    k = int(round(pipeline.share * len(batch)))
+    return {name: validate(probability, jurors, k, settings) for name, settings in jury_variants().items()}, k
+
+
+def check_jury_grant_count(ctx) -> str:
+    outcomes, k = jury_outcomes(ctx)
+    grants = {name: int(outcome.decisions.sum()) for name, outcome in outcomes.items()}
+    wrong = {name: count for name, count in grants.items() if count != k}
+    assert not wrong, f"grants != {k}: {wrong}"
+    zero = outcomes["zero_triggers"]
+    assert not zero.triggered.any(), f"{int(zero.triggered.sum())} triggered with triggers off"
+    assert np.array_equal(zero.decisions, zero.proposed), "decisions != proposed with zero triggers"
+    return f"k={k} grants " + " ".join(f"{name}={count}" for name, count in grants.items())
+
+
+def check_jury_swap_symmetry(ctx) -> str:
+    outcomes, _ = jury_outcomes(ctx)
+    for name, outcome in outcomes.items():
+        out, into = outcome.overturned_out, outcome.overturned_in
+        assert len(out) == len(into), f"{name}: out {len(out)} != in {len(into)}"
+        assert np.all(outcome.proposed[out] == 1), f"{name}: overturned_out not proposed grants"
+        assert np.all(outcome.proposed[into] == 0), f"{name}: overturned_in not proposed refusals"
+        assert np.all(outcome.triggered[out]) and np.all(outcome.triggered[into]), f"{name}: untriggered overturn"
+    return "swaps " + " ".join(f"{name}={len(outcome.overturned_out)}" for name, outcome in outcomes.items())
+
+
+def check_jury_region_invariance(ctx) -> str:
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    columns = ["region_administrative", "code_postal_3", "distance_domicile_campus_km"]
+    order = np.random.default_rng(11).permutation(len(batch))
+    shuffled = batch.copy()
+    shuffled[columns] = batch[columns].to_numpy()[order]
+    assert not shuffled[columns].equals(batch[columns]), "permutation left columns unchanged"
+    assert np.array_equal(pipeline.decide(batch).decisions, pipeline.decide(shuffled).decisions), "decisions differ (I2)"
+    return "decisions identical after joint shuffle of region, postal, distance"
+
+
+def check_jury_determinism(ctx) -> str:
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    first, second = pipeline.decide(batch), pipeline.decide(batch)
+    for field in ("decisions", "proposed", "triggered", "overturned_out", "overturned_in"):
+        assert np.array_equal(getattr(first, field), getattr(second, field)), f"{field} differs"
+    assert first.reasons == second.reasons, "reasons differ"
+    assert first.votes.keys() == second.votes.keys(), "juror names differ"
+    assert all(np.array_equal(first.votes[name], second.votes[name]) for name in first.votes), "votes differ"
+    return f"two decide calls identical over {len(batch)} rows"
+
+
+def check_jury_record(ctx) -> str:
+    summary = json.loads((ctx["tmp"] / "baseline" / "decision_record.json").read_text())
+    jury = summary["jury"]
+    assert 150 <= jury["triggered"] <= 250, f"triggered {jury['triggered']} outside 150-250"
+    assert jury["overturned_out"] == jury["overturned_in"], f"out {jury['overturned_out']} != in {jury['overturned_in']}"
+    assert 20 <= jury["overturned_out"] <= 40, f"overturned {jury['overturned_out']} outside 20-40"
+    return f"triggered={jury['triggered']} overturned_out={jury['overturned_out']} overturned_in={jury['overturned_in']}"
+
+
+def check_jury_offset_monotone(ctx) -> str:
+    from src.harness.controller import OFFSET_GRID
+    from src.policy import is_remote
+
+    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    remote = is_remote(batch).astype(bool)
+    k = int(round(pipeline.share * len(batch)))
+    grants, remote_grants = {}, {}
+    for offset in OFFSET_GRID:
+        decisions = pipeline.predict(batch, float(offset))
+        grants[round(float(offset), 3)] = int(decisions.sum())
+        remote_grants[round(float(offset), 3)] = int(decisions[remote].sum())
+    wrong = {offset: count for offset, count in grants.items() if count != k}
+    assert not wrong, f"grants != {k}: {wrong}"
+    series = list(remote_grants.values())
+    drops = [(a, b) for a, b in zip(series, series[1:]) if b < a - 2]
+    assert not drops, f"remote grants fall by more than 2: {drops}"
+    assert series[-1] >= series[0], f"remote grants {series[0]} -> {series[-1]} decrease overall"
+    reach = remote_grants[0.1] - remote_grants[-0.1]
+    assert reach >= 10, f"offset reach {reach} < 10: remote grants {remote_grants[-0.1]} at -0.10, {remote_grants[0.1]} at +0.10"
+    return f"remote grants {remote_grants[-0.1]}/{remote_grants[0.0]}/{remote_grants[0.1]} at -0.10/0/+0.10, grants={k} at {len(grants)} offsets"
 
 
 def check_frame_rejects(ctx) -> str:
@@ -798,6 +908,12 @@ def main() -> int:
     run_check("extra_fields", check_extra_fields, ctx)
     run_boundary_checks(ctx)
     run_check("explain_identity", check_explain_identity, ctx)
+    run_check("jury_grant_count", check_jury_grant_count, ctx)
+    run_check("jury_swap_symmetry", check_jury_swap_symmetry, ctx)
+    run_check("jury_region_invariance", check_jury_region_invariance, ctx)
+    run_check("jury_determinism", check_jury_determinism, ctx)
+    run_check("jury_record", check_jury_record, ctx)
+    run_check("jury_offset_monotone", check_jury_offset_monotone, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} passed in {time.time() - started:.0f}s; failed: {failures}", flush=True)
     shutil.rmtree(tmp, ignore_errors=True)

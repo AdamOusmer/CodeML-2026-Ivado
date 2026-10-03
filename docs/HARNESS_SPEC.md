@@ -1,4 +1,4 @@
-# Decision harness specification (v4, synced to 576d28e)
+# Decision harness specification (v5, synced to 576d28e + preprocessing nodes + validator jury, merit-only declared)
 
 Contract for the controller that wraps the fairness pipeline, decides a batch, audits it, and refuses to
 publish unsafe decisions. "MUST" = contract. "DIVERGENCE:" = code differs from contract; code is the current truth.
@@ -21,9 +21,14 @@ Non-goals
 2. Fit `CommitteeModel` on history (the 8 `COMMITTEE_FEATURES` + remote flag). Remove the committee's remote-region
    penalty: `corrected_logit(removal=1.0)`; allocate at budget -> corrected labels.
 3. Main model: region-blind logistic regression (`StandardScaler` + `LogisticRegression`) on corrected labels.
-4. Jury: weighted sum of percentile-rank votes `main_model` (model probability) and `merit` (`cote_r_equivalent`).
-   Declared weights 0.5 / 0.5. Percentiles are computed within the scored batch.
-5. Allocate: top `round(share * n)` scores, stable argsort.
+4. Validator jury (`policy.jury.validate`): the main model proposes the top `k = round(share * n)` (stable argsort).
+   Jurors `merit` (`cote_r_equivalent`) and `programme_merit` (R z-scored within programme, history statistics) are available;
+   declared config uses `merit` only. Jurors vote GRANT/REFUSE by batch percentile vs `1 - k/n`. Triggers (any fires):
+   `near_cutoff` (band 0.025 x n around the cutoff rank), `disagreement` (juror vs main percentile gap > 0.30).
+   Low-confidence trigger removed (see JURY_SPEC §3). A triggered decision is overturned only if jurors voting OVERTURN reach `quorum` (1.0, unanimous).
+   Overturns are paired swaps (strongest first; strength = mean abs(juror percentile - cutoff) over jurors voting OVERTURN only),
+   so grants stay exactly `k`; unpaired overturns stand as proposed. Percentiles are computed within the scored batch.
+5. Allocation is the jury's output; grants = `k` by construction.
 6. Harness: audit -> (one bounded correction) -> publish or BLOCK.
 
 Budget rule: `share = history["decision_octroi"].mean()` (39.94 % on supplied data, 10,000 rows;
@@ -40,6 +45,7 @@ CLI handles `InputError`, `DataValidationError`, `FileNotFoundError`, `KeyError`
 | `src/common/graph.py` | `Node`, `Graph`, `GraphError` (stdlib node runtime: dependency order, concurrency, add/replace/without) |
 | `src/policy/schema.py` | `PROGRAMMES`, `TRANSFORMS`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features` (no sklearn) |
 | `src/policy/core.py` | `production_features`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap` (no longer owns features schema) |
+| `src/policy/jury.py` | `JurySettings`, `JuryOutcome`, `validate` (numpy only; pure) |
 | `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
 | `src/evaluation/core.py` | `Candidate`, `evaluate`, `evaluate_split`, `run`, `summarize`, `scaled_utility` (package-internal) |
 | `src/evaluation/candidates.py` | `default_candidates()`, candidate decide-fns, `pareto_report` (returns table + figure; no file I/O) |
@@ -66,7 +72,7 @@ Each package exposes its public API in `__init__.py` with `__all__`. Code outsid
 
 | Package | Public API (`__all__`) |
 |---|---|
-| `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `PROGRAMMES`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
+| `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `PROGRAMMES`, `COMMITTEE_FEATURES`, `SCORING_FEATURES`, `feature_frame`, `committee_features`, `scoring_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels`, `JurySettings`, `JuryOutcome`, `validate` |
 | `src.monitoring` | `EO_GAP_ALERT`, `Check`, `Verdict`, `run_checks`, `verdict`, `overall_status`, `MONITORING`, `CHECK_NODES`, `monitoring_graph` |
 | `src.explain` | `explain` |
 | `src.evaluation` | `SEARCH_SPACE`, `tune`, `ParetoReport`, `pareto_report` |
@@ -107,8 +113,8 @@ Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forb
 | Id | Invariant | Enforced by |
 |---|---|---|
 | I1 | Grants = round(share x n); 0.36 <= share <= 0.44 | `budget_share`, `allocate`, check "grant rate within budget" (ALERT, non-correctable) |
-| I2 | Default scoring never reads `region_administrative`, `code_postal_3`, `distance_domicile_campus_km`; offset 0 => `score` = jury score | `scoring_features`, `FairPipeline.score` |
-| I3 | Region enters a decision only via `ADJUST_OFFSET`, abs(offset) <= 0.10, recorded; training labels use removal = 1.0 | `fit_offset` grid, `DecisionRecord` |
+| I2 | Default scoring never reads `region_administrative`, `code_postal_3`, `distance_domicile_campus_km`; offset shifts the main model probability for ranking only; `near_cutoff` reads the decision ranking (probability + offset), `disagreement` the raw main percentile | `scoring_features`, `FairPipeline.decide`, `validate(..., ranking=)` |
+| I3 | Region enters a decision only via `ADJUST_OFFSET` (shifts the ranking, hence the `near_cutoff` window, so review follows the decision boundary; `disagreement` stays on the raw main percentile), abs(offset) <= 0.10, recorded; training labels use removal = 1.0 | `fit_offset` grid, `DecisionRecord` |
 | I4 | Same history + batch => identical decisions, scores, record (record has no timestamps) | no RNG in decide path, stable sorts, deterministic LR |
 | I5 | Blocked run never writes `predictions.csv` | `src.adapters.write_decision` writes `predictions.csv` only if `record.published` |
 | I6 | Every harness action is one of `ActionKind` and appears in `record.actions` | `controller.decide` |
@@ -125,7 +131,7 @@ audit trail of a blocked run) and writes `predictions.csv` only when published; 
 | Kind | Params (as coded) | When |
 |---|---|---|
 | `SELECT_CONFIG` | `{config: name}` | once, first (`controller.decide`) |
-| `ADJUST_OFFSET` | `{offset, moved: count, alerts: [check names]}` | first verdict ALERT, every ALERT check `correctable`, and `fit_offset` != 0 |
+| `ADJUST_OFFSET` | `{offset, moved: count, offset_moved: count, alerts: [check names]}` | first verdict ALERT, every ALERT check `correctable`, and `fit_offset` != 0; re-runs the jury with the shifted ranking |
 | `BLOCK` | `{checks, suggestion}` | final verdict ALERT |
 
 ```
@@ -135,8 +141,10 @@ FIT -> DECIDE(offset 0) -> AUDIT --OK/WARN--> PUBLISH
 ```
 - Exactly one correction at most. ALERT after the correction MUST end in BLOCK, exit 3, no fallback policy.
 - `BLOCK.suggestion` = `MERIT_ONLY_SUGGESTION` text for humans; the harness MUST NOT apply it.
+- `moved` / `moved_ids` count final (post-jury) decision differences, so they include jury churn (swaps that change because
+  the ranking shifted). `offset_moved` counts proposal changes from the offset alone, before the jury (`adjusted.proposed != outcome.proposed`).
 - Moved ids go in `record.moved_ids`; gaps before/after are readable from `verdicts[0]` vs `verdicts[1]`.
-- DIVERGENCE: `SELECT_CONFIG` carries no Pareto evidence; `ADJUST_OFFSET.params` has `moved` count and `alerts`,
+- DIVERGENCE: `SELECT_CONFIG` carries no Pareto evidence; `ADJUST_OFFSET.params` has `moved`, `offset_moved` counts and `alerts`,
   not gaps or ids (`controller.decide`). Earlier spec listed evidence, gaps, ids.
 - If `fit_offset` returns 0, no `ADJUST_OFFSET` is recorded; the run goes straight to BLOCK with reason
   "no offset in the allowed grid lowers the gap".
@@ -145,7 +153,8 @@ FIT -> DECIDE(offset 0) -> AUDIT --OK/WARN--> PUBLISH
 Corrector (`fit_offset`): over `OFFSET_GRID` (41 points, [-0.10, 0.10], rounded to 3 decimals) pick the offset minimizing the larger
 of the `eo_gap` vs `corrected` and vs `merit` (alerts fire on each gap); key `(round(max gap, 3), abs(offset), -offset)`,
 so ties prefer the smaller and then the positive offset. A NaN gap scores infinity.
-Offset is added to the jury score of remote-region applicants (`is_remote`), then `allocate` at the same budget.
+Offset is added to the main model probability of remote-region applicants (`is_remote`) as the ranking passed to `validate`; the jury then re-runs at the same budget.
+`near_cutoff` ranks by the shifted ranking; `disagreement` and juror votes read raw values (earlier red-team: shifting all triggers inverted the correction). At offset +0.03, raw-rank `near_cutoff` would review 14 different applicants and change 8 final decisions; decision-rank is deliberate.
 
 ## 7. Monitoring contract
 `run_checks(history, batch, decisions, reviewed=None, eo_gap_alert=EO_GAP_ALERT, *, graph=MONITORING, workers=4) -> list[Check]`; `verdict(checks) -> Verdict`.
@@ -160,22 +169,24 @@ Offset is added to the jury score of remote-region applicants (`is_remote`), the
 ## 8. Evaluation and tuner (offline)
 - `pareto`: runs `default_candidates()` over K splits (CLI default 10, `model_corrige.py` `SPLITS = 10`), 70/30 stratified,
   seeds 0..K-1, ThreadPool `workers` (default 4). Candidates: production RF natural (anchor) and at budget,
-  drop-proxies, ThresholdOptimizer, ExpGrad sweep, committee removal sweep, jury merit-weight sweep (`SEARCH_SPACE`),
+  drop-proxies, ThresholdOptimizer, ExpGrad sweep, committee removal sweep, jury band sweep `BAND_SWEEP = (0, 0.0125, 0.025, 0.05, 0.10)`,
   and `FairPipeline(DECLARED_CONFIG)`. Pareto axes: eo_gap vs acc_historical; only `budget_ok` rows eligible.
-- `tune`: per `Config` in `SEARCH_SPACE` (merit weight 0, .25, .5, .75, 1; removal 1.0), per reference r in {corrected, merit}:
+- `tune`: per `Config` in `SEARCH_SPACE` (9 configs: band {0.0125, 0.025, 0.05} x quorum {0.5, 1.0} x jurors {merit; merit+programme_merit}, quorum 0.5 with one juror skipped as identical; removal 1.0), per reference r in {corrected, merit}:
   `equity_r = 1 - gap_r / gap_r(committee, removal 0, at budget)`, `utility_r = scaled_utility`,
   `score_r = (20 equity_r + 15 utility_r) / 35`; `worst_case = min(score_corrected, score_merit)`. Output `resultats_tuner.csv`.
 - Team reads table, edits `DECLARED_CONFIG` in `src/policy/models.py` by hand. Neither `tune` nor `pareto` feeds `decide`.
-- Currently `DECLARED_CONFIG = Config("jury 50/50")` (removal 1.0, weights 0.5/0.5).
+- Currently `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))` (removal 1.0, band 0.025, disagree 0.30, quorum 1.0). User decision (WP9); evidence in JURY_SPEC §9.
+  The jury band sweep in `pareto` uses the same juror set, so its band 0.025 row equals the declared row.
 
 ## 9. Explanations and record
 `explain(pipeline, df, decisions, scores, offset, top=3)` -> columns `id_candidat, decision, score, merit_vote,
-model_vote, offset` (offset x remote flag), `factor_1..3` (`"<feature> <+x.xx>"`, top by abs of coef x standardized value).
+model_vote, offset` (offset x remote flag), `validated` (bool), `trigger_reasons`, `juror_votes`, `jury_outcome`, `factor_1..3` (`"<feature> <+x.xx>"`, top by abs of coef x standardized value).
+`jury_outcome` in `not_reviewed | confirmed | overturn_unpaired | overturned_out | overturned_in`.
 
 `DecisionRecord` fields: `config, share, status ("published"|"blocked"), ids, decisions, scores, offset, verdicts,
-actions, moved_ids, explanations, region_rates, input_hashes` (sha256 per input file name).
+actions, moved_ids, explanations, region_rates, input_hashes` (sha256 per input file name), `jury` (counts: `triggered`, `overturned_out`, `overturned_in`, `reasons` per trigger).
 `src.adapters.write_decision(record, out_dir)` always writes `decision_record.json` (strict JSON via `src.adapters.json_text`: non-finite floats become null; `summary()`: status, config, share, grants, applicants, offset,
-actions, verdicts with checks, moved_ids, region_rates, input_hashes) and `explanations.csv`;
+actions, verdicts with checks, moved_ids, region_rates, jury, input_hashes) and `explanations.csv`;
 writes `predictions.csv` (`id_candidat, decision_octroi`) only when published (I5).
 Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 
@@ -220,7 +231,7 @@ Per-applicant decisions and scores are in `explanations.csv`, not in the JSON.
 28. `extra_fields`: CLI rejects rows with more fields than header, exit 1, nothing written.
 
 ## 12. Open risks
-- Declared 50/50 jury rests on red-team simulation, not the hidden reference.
+- Declared jury rests on red-team simulation, not the hidden reference.
 - Percentile votes depend on batch composition.
 - Corrections inherit the proxy references' assumptions; both are derived from the audited committee.
 - Offset bound is not enforced inside `FairPipeline` (I3 divergence).

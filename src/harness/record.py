@@ -42,6 +42,7 @@ class DecisionRecord:
     explanations: pd.DataFrame
     region_rates: dict[str, float]
     input_hashes: dict[str, str]
+    jury: dict
 
     @property
     def published(self) -> bool:
@@ -58,6 +59,7 @@ class DecisionRecord:
             "actions": [{"kind": a.kind.value, "reason": a.reason, "params": a.params} for a in self.actions],
             "verdicts": [{"status": v.status, "checks": [c.to_dict() for c in v.checks]} for v in self.verdicts],
             "moved_ids": self.moved_ids,
+            "jury": self.jury,
             "region_rates": self.region_rates,
             "input_hashes": self.input_hashes,
         }

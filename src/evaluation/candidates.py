@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -20,9 +20,9 @@ from src.policy import (
 
 from .core import Candidate, run, summarize
 from .pareto import pareto_mask, plot
-from .tuner import SEARCH_SPACE
 
 SEED = 42
+BAND_SWEEP = (0.0, 0.0125, 0.025, 0.05, 0.10)
 EXPGRAD_BOUNDS = [0.30, 0.20, 0.10, 0.05, 0.02, 0.01]
 REMOVALS = np.linspace(0, 1, 6)
 PANELS = [("eo_gap_corrected", "acc_historical"), ("eo_gap_merit", "acc_historical")]
@@ -84,6 +84,10 @@ def pipeline(config):
     return decide
 
 
+def band_config(band):
+    return replace(DECLARED_CONFIG, name=f"band {band}", jury=replace(DECLARED_CONFIG.jury, band=band))
+
+
 def default_candidates() -> list[Candidate]:
     return [
         Candidate("production RF, natural threshold (anchor)", "baseline", production_natural),
@@ -93,8 +97,7 @@ def default_candidates() -> list[Candidate]:
         *[Candidate(f"ExpGrad eps={bound}", "ExpGrad sweep", expgrad(bound), bound) for bound in EXPGRAD_BOUNDS],
         *[Candidate(f"committee, penalty removal={removal:.1f}", "penalty removal sweep", committee_removal(removal), removal)
           for removal in REMOVALS],
-        *[Candidate(f"jury, {config.name}", "jury merit weight sweep", pipeline(config),
-                    config.jury_weights.get("merit", 0.0)) for config in SEARCH_SPACE],
+        *[Candidate(f"jury, band {band}", "jury band sweep", pipeline(band_config(band)), band) for band in BAND_SWEEP],
         Candidate(f"declared: {DECLARED_CONFIG.name}", "full pipeline", pipeline(DECLARED_CONFIG)),
     ]
 

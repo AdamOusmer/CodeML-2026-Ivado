@@ -6,6 +6,7 @@ _EXPORTS = {
              "production_features"),
     "schema": ("PROGRAMMES", "COMMITTEE_FEATURES", "SCORING_FEATURES", "feature_frame", "committee_features",
                "scoring_features"),
+    "jury": ("JurySettings", "JuryOutcome", "validate"),
     "models": ("Config", "DECLARED_CONFIG", "CommitteeModel", "FairPipeline", "reference_labels"),
 }
 _MODULE_OF = {name: module for module, names in _EXPORTS.items() for name in names}

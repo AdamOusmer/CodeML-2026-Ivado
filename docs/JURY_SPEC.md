@@ -65,7 +65,7 @@ probability (about 0.68), so it flagged only refusals; cutoff-centered windows w
 - `validate(main_probability, juror_scores: dict[str, array], k, settings) -> JuryOutcome`.
 
 ### 5.2 Policy — `src/policy/models.py`
-- `Config`: replace `jury_weights` with `jury: JurySettings`; `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))`.
+- `Config`: replace `jury_weights` with `jury: JurySettings`; `DECLARED_CONFIG = Config("validator jury")` (merit + programme merit, both must agree).
 - `FairPipeline.fit` also stores programme statistics from history (`programme_stats_`).
 - `FairPipeline.juror_scores(df) -> dict`; `FairPipeline.decide(df, offset=0.0) -> JuryOutcome`;
   `predict(df, offset)` returns `decide(...).decisions`; `score(df, offset)` returns the main model's score
@@ -139,7 +139,8 @@ self-agreement.
 - Swap strength averages |juror percentile − cutoff| over dissenting jurors only (OVERTURN voters), so a confirming juror no longer dilutes it. Quorum stays 1.0.
 - Low-confidence trigger removed (`JurySettings.conf` gone, `JURY_REASONS = (near_cutoff, disagreement)`); evidence in §3.
 - `ADJUST_OFFSET.params` gains `offset_moved` (proposal changes from the offset alone, before the jury); `moved` stays the final diff.
-- Declared config is merit-only (user decision, WP9): `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))`.
+- Declared config stays the two-juror unanimous jury (user decision, WP9): `DECLARED_CONFIG = Config("validator jury")`. Merit-only was proposed
+  by the jury session and declined by the user; its evidence is kept below for the record.
   Evidence, 10 splits, paired vs the previous two-juror unanimous config, ±2 SE: stress reference +0.0057 ± 0.0037; worst case over 2 refs +0.0034 ± 0.0039;
   quorum 0.5 two-juror on stress +0.0047 ± 0.0057; main model only on stress −0.016 ± 0.013. Caveat: the merit juror is also the merit reference.
   Real batch: triggered 201 (near_cutoff 200, disagreement 2), 37 swaps.

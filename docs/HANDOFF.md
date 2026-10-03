@@ -18,7 +18,7 @@ Tags: [R] = reproduced on `feat/validator-jury` after the rebase with command sh
 
 | Area | Path | State | Evidence |
 |---|---|---|---|
-| Domain policy | `src/policy/{regions,schema,core,jury,models}.py` | done | `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))` (`models.py:21`) [R, grep]. Validator jury: triggers near_cutoff + disagreement; strength over dissenting jurors (JURY_SPEC §9) |
+| Domain policy | `src/policy/{regions,schema,core,jury,models}.py` | done | `DECLARED_CONFIG = Config("validator jury")` (two jurors, both must agree) [R, grep]. Validator jury: triggers near_cutoff + disagreement; strength over dissenting jurors (JURY_SPEC §9) |
 | Evaluation core/pareto/tuner/candidates | `src/evaluation/{core,pareto,tuner,candidates}.py` | done | declared pipeline registered in `candidates.py`. `model_corrige.py` (10 splits) and `tune --splits 10 --workers 2` exit 0 [R, FINDINGS §5] |
 | Monitoring | `src/monitoring/checks.py` | done | `monitor --plain --no-log-file` exit 0, overall OK: budget 0.400 (1,598/4,000), impact ratio 0.819, EO vs corrected 0.018, EO vs merit 0.008, drift OK [R]. Forced ALERT correctable / drift ALERT non-correctable: acceptance [R] |
 | Explanations | `src/explain.py` | done (Codex) | `decide` wrote `explanations.csv` [R]. Logit identity max err 1.4e-14 [U] |
@@ -65,7 +65,7 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 |---|---|---|---|---|
 | 7 | ✅ Done: Codex gpt-6.1-sol + Fable review of `5a126b2..HEAD`; all P1/P2 fixed (fit_offset max-gap objective, NaN metrics → blocking ALERT, binary PSI, qcut edges, id validation, clean ValueError exit) | Codex + Fable | — | done |
 | 8 | ✅ Done: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` → 34/34 PASS (baseline, budget guard, duplicate id, correction, drift BLOCK + I5 sentinel, I4 replay, I2, I8, explain identity, boundaries with injected-edge proof, jury checks) | Sonnet | 7 | done |
-| 9 | ✅ Done: user picked merit-only jury; `DECLARED_CONFIG` in `models.py`, HARNESS_SPEC §8, JURY_SPEC §9 (evidence), acceptance rerun | Opus presents, user decides | — | done |
+| 9 | ✅ Done: user picked the two-juror unanimous jury (merit-only proposed and declined); `DECLARED_CONFIG` in `models.py`, HARNESS_SPEC §8, JURY_SPEC §9 (evidence), acceptance rerun | Opus presents, user decides | — | done |
 | 10 | `audit_rapport.ipynb` (10-section outline in FINDINGS §6), sklearn only, no statsmodels | Sonnet | — | `jupyter nbconvert --execute` runs top to bottom on `data/`, exit 0, no errors in cells |
 | 11 | README: replace top with our solution, commands, artifacts; keep organizer brief below | Sonnet | 8 | every command in README run once, exit 0 |
 | 12 | Monitoring plan (governance) in README or `docs/MONITORING_PLAN.md`: per check in `checks.py` — metric, threshold, owner, action on WARN/ALERT, cadence, how BLOCK is lifted, Law 25 reference only if verified | Fable draft, Sonnet edit | 8 | every threshold matches `checks.py` (grep-checked); each check has owner + action; one page max; user reads it |
@@ -86,7 +86,7 @@ Exit codes: 3 = BLOCK (spec). `decide` publish = 0.
 ## 6. Known gaps and risks
 
 - Corrector reach at the 0.05 production threshold is untested on a real drifted batch (forced drift study, remote R -1.5, did not reach ALERT; `eo_gap_alert=0.015` forced test blocked earlier).
-- Merit juror is also the merit reference: merit-reference scores partly self-agreement (JURY_SPEC §8–10). Declared merit-only chosen by user on stress-reference evidence.
+- Merit juror is also the merit reference: merit-reference scores partly self-agreement (JURY_SPEC §8–10). Declared jury: two jurors (user decision); merit-only declined.
 - All fairness references are proxies; hidden reference unknown (FINDINGS §4).
 - Percentile votes depend on batch cohort.
 - Law 25 article number (12.1) unverified; verify before citing.

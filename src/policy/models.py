@@ -16,7 +16,7 @@ class Config:
     jury: JurySettings = JurySettings()
 
 
-DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))
+DECLARED_CONFIG = Config("validator jury")
 
 OFFSET_BOUND = 0.10
 

@@ -1,7 +1,7 @@
-# FINDINGS (2026-10-03, integration of PR #1, PR #2 and the validator jury, merit-only declared)
+# FINDINGS (2026-10-03, integration of PR #1, PR #2 and the validator jury, two-juror jury declared)
 
 Tags: [R] re-run this session (cmd given). [U] unverified, source: prior session (not reproducible without new code). Scratch outputs: /private/tmp/ff/.
-Revision: validator jury replaces the rank-vote jury; declared config now merit-only, low-confidence trigger removed, swap strength over dissenters only. Sections 1-4 re-verified at ac936d0 (not touched here). Sections 5 and 7 re-run this session.
+Revision: validator jury replaces the rank-vote jury; declared config = two jurors (merit + programme merit) both must agree, low-confidence trigger re-centred on the decision boundary, swap strength over dissenters only. Sections 1-4 re-verified at ac936d0 (not touched here). Sections 5 and 7 re-run this session.
 Acceptance: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` -> 34/34 passed in 37 s.
 
 ## 1. Bias
@@ -69,7 +69,7 @@ Conclusion holds ([R] LR, RF, LightGBM, MLP, stacking all 88.4-88.8, spread 0.4 
 | Jury, band 0.0125 | 42.4 / 36.2 | 0.010 (0.003) | 0.008 (0.008) | 0.939 | 0.870 |
 | Jury, band 0.05 | 42.6 / 35.9 | 0.023 (0.013) | 0.008 (0.006) | 0.965 | 0.867 |
 | Jury, band 0.1 | 42.9 / 35.5 | 0.034 (0.015) | 0.006 (0.003) | 0.988 | 0.861 |
-| **Declared validator jury, merit (band 0.025)** | 42.5 / 36.1 | 0.015 (0.007) | 0.009 (0.010) | 0.948 | 0.869 |
+| **Declared validator jury, two jurors (band 0.025)** | 42.5 / 36.1 | 0.015 (0.007) | 0.009 (0.010) | 0.948 | 0.869 |
 All grant rate 0.399 (budget ok) except anchor 0.381, ThresholdOptimizer 0.440. Jury bands 0.0125 and 0.1 are `pareto True`; bands 0.0, 0.025 and 0.05 are `pareto False` (eo_gap vs acc_historical axes). Band sweep uses the declared juror set (merit), so its band 0.025 row equals the declared row.
 
 Tuner [R] `OMP_NUM_THREADS=2 uv run python -m src.main tune --splits 10 --workers 2 --plain --no-log-file --out-dir .` (10 splits, 9 configs, `resultats_tuner.csv`, file order = worst_case descending):

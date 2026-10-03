@@ -1,4 +1,4 @@
-# Decision harness specification (v5, synced to 576d28e + preprocessing nodes + validator jury, merit-only declared)
+# Decision harness specification (v5, synced to 576d28e + preprocessing nodes + validator jury + label correction and post-processing)
 
 Contract for the controller that wraps the fairness pipeline, decides a batch, audits it, and refuses to
 publish unsafe decisions. "MUST" = contract. "DIVERGENCE:" = code differs from contract; code is the current truth.
@@ -178,7 +178,8 @@ Offset is added to the main model probability of remote-region applicants (`is_r
   `equity_r = 1 - gap_r / gap_r(committee, removal 0, at budget)`, `utility_r = scaled_utility`,
   `score_r = (20 equity_r + 15 utility_r) / 35`; `worst_case = min(score_corrected, score_merit)`. A committee baseline gap of 0 (no regional penalty) leaves equity undefined: `tune` raises `ValueError("no regional penalty: equity undefined")`. Output `resultats_tuner.csv`.
 - Team reads table, edits `DECLARED_CONFIG` in `src/policy/models.py` by hand. Neither `tune` nor `pareto` feeds `decide`.
-- Currently `DECLARED_CONFIG = Config("validator jury, merit", jury=JurySettings(jurors=("merit",)))` (removal 1.0, band 0.025, disagree 0.30, quorum 1.0). User decision (WP9); evidence in JURY_SPEC §9.
+- Currently `DECLARED_CONFIG = Config("validator jury")`: jurors merit + programme merit, quorum 1.0 (both must agree), removal 1.0, band 0.025,
+  conf 0.05 centred on the decision boundary, disagree 0.30. User decision (WP9); merit-only was proposed and declined (JURY_SPEC §9).
   The jury band sweep in `pareto` uses the same juror set, so its band 0.025 row equals the declared row.
 
 ## 9. Explanations and record

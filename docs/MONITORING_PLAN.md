@@ -50,14 +50,14 @@ Règle de correction (`controller.decide`) : une ALERT n'est corrigée que si **
 | Taux d'octroi | 0.3995 (1 598 / 4 000) | 36 %–44 % | OK | budget historique 0.3994 |
 | Écart de parité | 0.057 | warn > 0.10 | OK | centre 42.3 %, éloigné 36.5 % |
 | Ratio d'impact | 0.819 | warn < 0.80 | OK | Côte-Nord 35.0 % vs Capitale-Nationale 42.8 % |
-| Écart d'opportunité vs mérite | 0.011 | warn > 0.03, alert > 0.05 | OK | |
-| Écart d'opportunité vs comité corrigé | 0.018 | warn > 0.03, alert > 0.05 | OK | |
-| Écart intersectionnel | 0.064 | warn > 0.15 | OK | première génération |
+| Écart d'opportunité vs mérite | 0.010 | warn > 0.03, alert > 0.05 | OK | |
+| Écart d'opportunité vs comité corrigé | 0.016 | warn > 0.03, alert > 0.05 | OK | |
+| Écart intersectionnel | 0.066 | warn > 0.15 | OK | première génération |
 | Dérive des proxys (ΔAUC) | +0.008 | alert > +0.05 | OK | historique 0.845, lot 0.853 |
 | PSI numérique max | 0.012 | warn > 0.10, alert > 0.25 | OK | `log_revenu` (centre) |
 | PSI catégoriel max | 0.038 | warn > 0.10, alert > 0.25 | OK | `programme_etudes` (Gaspésie), Génie +7.98 pts |
 
-Offset 0 ; actions : `SELECT_CONFIG` seulement ; jury : 207 déclenchés, 36 échanges.
+Offset 0 ; actions : `SELECT_CONFIG` seulement ; jury : 201 déclenchés (200 près du seuil, 35 faible confiance, 2 désaccord ; chevauchements), 35 échanges.
 
 ## 4. Boucle de décision automatisée
 
@@ -121,7 +121,7 @@ R = réalise, A = approuve, C = consulté, I = informé.
 |---|---|
 | Jamais de ré-entraînement sur ses propres décisions (I7) | l'historique d'entraînement est un fichier séparé ; `decide` ne lit `predictions.csv` d'aucun lot antérieur |
 | Les boutons (`removal`, `band`, `conf`, `disagree`, `quorum`, `jurors`, seuils) ne changent que par l'équipe : `tune` → lecture de la table → édition manuelle de `DECLARED_CONFIG` ou des constantes → revue | I8 ; aucune valeur de configuration n'est lue à l'exécution depuis un fichier modifiable |
-| Toute modification (code, seuil, configuration, historique) relance `scripts/acceptance.py` (30 contrôles au dernier passage : 30/30) avant mise en service | preuve d'acceptation archivée avec la version |
+| Toute modification (code, seuil, configuration, historique) relance `scripts/acceptance.py` (34 contrôles au dernier passage : 34/34) avant mise en service | preuve d'acceptation archivée avec la version |
 | Toute dérive d'historique (rafraîchissement) exige un nouveau `check-data`, une ré-estimation de la pénalité et un `pareto` | tableau de la section 6 |
 | Pas de changement de politique au moment de la décision hormis `ADJUST_OFFSET` borné | HARNESS_SPEC §1, §6 |
 

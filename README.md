@@ -13,11 +13,11 @@ exactly: 39.94%.
 
 | Metric | Baseline (production RF) | Declared (validator jury) |
 |---|---|---|
-| EO gap vs corrected committee | 0.253 | 0.014 |
+| EO gap vs corrected committee | 0.253 | 0.013 |
 | EO gap vs merit | 0.247 | 0.010 |
 | Grants | — | 1,598 |
 | Monitoring checks | — | all OK |
-| Acceptance checks | — | 30/30 |
+| Acceptance checks | — | 34/34 |
 
 Note: "corrected" and "merit" are our own proxy references, not the hidden
 reference standard used for judging.
@@ -209,4 +209,4 @@ pip install -r requirements.txt
 `model_corrige.py` writes `predictions.csv`, `resultats_pareto.csv` and `pareto_front.png`.
 `decide` runs the validator jury and writes the published decisions to `--out-dir`.
 `monitor` runs the monitoring checks against the final decisions.
-`scripts/acceptance.py` runs the 30 acceptance checks.
+`scripts/acceptance.py` runs the 34 acceptance checks.

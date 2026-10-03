@@ -81,7 +81,9 @@ def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, s
             adjusted = pipeline.decide(batch, offset)
             moved_ids = batch["id_candidat"][adjusted.decisions != decisions].tolist()
             actions.append(Action(ActionKind.ADJUST_OFFSET, "opportunity gap alert",
-                                  {"offset": offset, "moved": len(moved_ids), "alerts": alerting(verdicts[-1])}))
+                                  {"offset": offset, "moved": len(moved_ids),
+                                   "offset_moved": int((adjusted.proposed != outcome.proposed).sum()),
+                                   "alerts": alerting(verdicts[-1])}))
             outcome = adjusted
             decisions = adjusted.decisions
             verdicts.append(audit(history, batch, decisions, eo_gap_alert))

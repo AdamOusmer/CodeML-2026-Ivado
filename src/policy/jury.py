@@ -87,9 +87,10 @@ def validate(main_probability, juror_scores, k, settings, ranking=None) -> JuryO
     overturned_out = np.empty(0, dtype=int)
     overturned_in = np.empty(0, dtype=int)
     if settings.jurors:
-        overturn_share = np.mean(juror_votes != proposed, axis=0)
+        dissent = juror_votes != proposed
+        overturn_share = dissent.mean(axis=0)
         overturned = triggered & (overturn_share >= settings.quorum)
-        strength = np.abs(np.mean(juror_percentiles, axis=0) - cutoff)
+        strength = np.sum(np.abs(juror_percentiles - cutoff) * dissent, axis=0) / np.maximum(dissent.sum(axis=0), 1)
         grants = np.flatnonzero(overturned & (proposed == 1))
         refusals = np.flatnonzero(overturned & (proposed == 0))
         count = min(len(grants), len(refusals))

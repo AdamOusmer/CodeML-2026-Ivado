@@ -7,18 +7,18 @@ Acceptance: `OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` -> 30/30 pas
 ## 1. Bias
 | Item | Value | Tag |
 |---|---|---|
-| Baseline EO gap (scorer denominator) | 0.270 | [R] README.md:104, LISEZMOI.md:110 (brief constant; not recomputed) |
+| Baseline EO gap (scorer denominator) | 0.270 | [R] README.md:104, LISEZMOI.md:110 (brief constant; not recomputed; historical labels vs corrected reference give 0.212, committee penalty-off 0.269 in section 5) |
 | Historical grant rate | 39.94 % | [R] pandas on data/donnees_demandes.csv |
 | Remote share (BSL, Cote-Nord, Gaspesie) | 40.0 % hist; 40.7 % eval (1628/4000) | [R] check-data |
 | Centre vs remote rate | 48.4 % vs 27.3 % (gap 0.211) | [R] |
 | By region | MTL 48.3, CN 48.4, BSL 26.9, Cote-Nord 26.3, Gaspesie 28.4 | [R] |
 | Mean R centre vs remote | 27.99 vs 27.33 | [R] |
 | First-gen centre vs remote | 26 % vs 44 % | [R] |
-| Income / hours / distance means | 76k/56k; 9.0/13.0 h; 20/221 km | [U] |
+| Income / hours / distance means (centre/remote) | 76k/56k; 9.0/13.0 h; 20/221 km | [R] pandas groupby on is_remote |
 | Same R, different outcome (centre/remote) | R 26-28: 24.1 / 6.7 %; R 28-30: 70.4 / 40.7 % (old 70.9 / 40.8, bin edge diff) | [R] |
-| Committee logit (standardized) | R +4.12, log income +0.80, hours +0.76, first-gen -0.03, programme ~0, remote -1.90 (odds x0.15) | [U] |
-| Penalty is one flat remote term (distance, sub-region, postal add nothing in-group) | yes | [U] |
-| Full penalty removal natural grant rate | 47.1 % (over budget; allocate to budget) | [U] |
+| Committee logit (standardized) | R +4.12, log income +0.80, hours +0.76, first-gen -0.03, programme ~0 (+-0.02), remote -1.90 (odds x0.15) | [R] `CommitteeModel().fit(history).lr_.coef_` |
+| Penalty is one flat remote term (distance, sub-region, postal add nothing in-group) | yes: 5-fold CV log-loss gain <= 0.0003 when adding distance, region or postal dummies (in-group and pooled) | [R] |
+| Full penalty removal natural grant rate (corrected logit > 0) | 47.1 % on eval batch (47.075 %; 45.7 % on history in-sample); over budget, allocate to budget | [R] `corrected_logit(batch, 1.0) > 0` |
 
 Budget bound 36-44 % (`BUDGET_BOUNDS` in `src/policy/core.py`).
 
@@ -27,28 +27,28 @@ Budget bound 36-44 % (`BUDGET_BOUNDS` in `src/policy/core.py`).
 |---|---|---|
 | Postal code to region purity | 1.0 | [R] |
 | Single-feature AUC remote vs centre | distance 0.998, hours 0.805, first-gen 0.59, income 0.307 (=0.693 flipped; old 0.671), R 0.439 (=0.561 flipped; old 0.53) | [R] raw AUC, orientation-dependent |
-| hours+income 0.832; all legit features 0.845-0.854 | | [U] (monitor proxy_auc history on 3 scoring features = 0.845 [R]) |
-| Mutual info: distance 0.63, hours 0.155, income 0.062, first-gen 0.017, R 0.008 | | [U] |
+| hours+income 0.842 (0.839 raw income; old 0.832); 3 scoring features 0.845; all committee features 0.854 | | [R] 3-fold CV logistic AUC on is_remote (monitor proxy_auc history = 0.845) |
+| Mutual info (nats): distance 0.63, hours 0.156, income 0.064, first-gen 0.017, R 0.015 (old 0.008; kNN estimator noise 0.013-0.015, R is ~0 either way) | | [R] sklearn `mutual_info_classif` vs is_remote, random_state 0/1 |
 | Proxy drift (monitor, eval batch vs history) | AUC 0.845 -> 0.853, +0.008 (alert > +0.05) | [R] monitor |
 | Feature drift max PSI (3 scoring features, histogram) | 0.012 (log_revenu, centre) | [R] monitor |
 | Categorical drift max PSI | 0.038 (programme_etudes, Gaspesie, Genie +7.98 pts) OK | [R] monitor |
-| Organizer RF acc 88.1 %; parity gap 0.188 / 0.181 (no region) / 0.173 (no region, no postal) | | [U] |
+| Organizer RF acc 88.1 %; parity gap 0.188 / 0.180 (no region) / 0.174 (no region, no postal) (old 0.181 / 0.173) | | [R] baseline_model.ipynb recipe: RF 300 trees leaf 20, split 0.3 seed 42, |centre - remote| selection rate |
 
 ## 3. Model capacity
-Claim: all models 87.5-88.8 % 5-fold CV, noise +-0.6. No script or doc in repo holds the source; only HANDOFF.md:57 and old FINDINGS.
+Claim: all models 87.9-88.8 % 5-fold CV, noise +-0.6 (R alone 85.7 is the floor). No script or doc in repo holds the source; only HANDOFF.md:57 and old FINDINGS. Re-run: StratifiedKFold(5, shuffle, seed 0), accuracy.
 | Model | Old | This session |
 |---|---|---|
-| Logistic | 88.74 | 87.96 [R] (my feature set, StratifiedKFold seed 0) |
-| RF all columns | 88.1 (organizer) | 88.42 [R] (300 trees) |
+| Logistic | 88.74 | 88.76 [R] (committee features + remote, standardized; seeds 0-2: 88.67-88.76) |
+| RF all columns | 88.1 (organizer holdout, [R] 88.13) | 88.42 [R] (300 trees, leaf 1); 87.88 with min_samples_leaf 20 |
 | R score alone | 85.7 | 85.71 [R] |
-| LightGBM tuned 88.66; torch MLP (MPS) 88.26-88.46; stacking 88.76 | | [U] |
-Conclusion holds ([R] spread LR to RF 0.5 pt, inside noise): capacity not the lever; labels biased.
+| LightGBM tuned 88.66; torch MLP (MPS) 88.26-88.46; stacking 88.76 | sklearn stand-ins: HistGradientBoosting 88.16 [R]; LR+RF+HGB stacking 88.82 [R]; sklearn MLP (64,32) untuned 86.21 [R] | [U] not reproduced: lightgbm and torch not installed |
+Conclusion holds ([R] spread LR to RF 0.3 pt (0.9 with leaf 20), near noise): capacity not the lever; labels biased.
 
 ## 4. Reference hypotheses (hidden reference unknown)
 - Merit reference: top R at same budget. Corrected reference: committee rule with regional penalty removed. Both built in src/policy/models.py `reference_labels`; monitor uses both [R].
-- Red-team simulation, pipeline = LR on corrected labels, closure / scaled utility: committee minus penalty 0.99/0.99; merit-only 0.88/0.86; merit within programme 0.93/0.86 [U].
-- Need-based / distance-hardship references implausible (baseline gap 0.46-0.51 vs brief 0.270) [U].
-- Rank blend 50/50 best worst case; agreement peaks at 40 % grant rate [U; prior rank-vote jury study, superseded by the validator jury, section 5].
+- Red-team simulation, pipeline = LR on corrected labels (FairPipeline, no jury, allocate at budget), closure (1 - EO gap/0.270) / scaled utility, 10 splits: committee minus penalty 0.98/0.99 (old 0.99/0.99); merit-only 0.96/0.85 (old 0.88/0.86); merit within programme 0.97/0.85 (old 0.93/0.86) [R] `scaled_utility`, `eo_gap` per reference; closure definition assumed, old closure not reproduced for merit refs.
+- Need-based / distance-hardship references implausible (baseline gap 0.46-0.51 vs brief 0.270) [U] not reproduced: baseline definition unrecoverable; my attempt (RF or historical labels vs lowest-income / top-distance at budget) gives 0.10-0.21.
+- Rank blend 50/50 best worst case; agreement peaks at 40 % grant rate [U; prior rank-vote jury study, superseded by the validator jury, section 5] not reproduced: rank-vote code removed.
 
 ## 5. 10-split results [R] `OMP_NUM_THREADS=2 uv run python model_corrige.py` (10 splits, exit 0, 37 s); values from `resultats_pareto.csv`.
 | Method | centre / remote | EO vs corrected (std) | EO vs merit (std) | agree merit | acc hist |

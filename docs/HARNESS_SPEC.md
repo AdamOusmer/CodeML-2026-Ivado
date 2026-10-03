@@ -38,38 +38,57 @@ DIVERGENCE: `ValueError` is not in the handled list of `src/main.py:main`; it hi
 | `src/policy/core.py` | features, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap` |
 | `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
 | `src/evaluation/core.py` | `Candidate`, `evaluate`, `evaluate_split`, `run`, `summarize`, `scaled_utility` |
-| `src/evaluation/candidates.py` | `default_candidates()`, candidate decide-fns, `pareto_report` (writes `resultats_pareto.csv`, `pareto_front.png`) |
-| `src/evaluation/pareto.py` | `pareto_mask`, `plot` |
+| `src/evaluation/candidates.py` | `default_candidates()`, candidate decide-fns, `pareto_report` (returns table + figure; no file I/O) |
+| `src/evaluation/pareto.py` | `pareto_mask`, `plot` (returns a matplotlib `Figure`; no file I/O) |
 | `src/evaluation/tuner.py` | `SEARCH_SPACE`, `score_split`, `tune` (offline) |
 | `src/monitoring/checks.py` | thresholds, `Check`, `run_checks`, `Verdict`, `verdict`, `overall_status` |
 | `src/explain.py` | `explain` |
-| `src/harness/record.py` | `ActionKind`, `Action`, `DecisionRecord` (single writer of outputs) |
+| `src/harness/record.py` | `ActionKind`, `Action`, `DecisionRecord` (data + `summary()`; no file I/O) |
 | `src/harness/controller.py` | `decide`, `audit`, `fit_offset`, `OFFSET_GRID` |
 | `src/preprocessing/validation.py` | `check-data` validation (own process pool) |
 | `src/common/logging` | logging, `RunContext`, `get_logger` |
+| `src/adapters/files.py` | all project file I/O: `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure` |
 | `src/main.py`, `model_corrige.py` | composition roots / entry points |
 
-`src/policy/__init__.py` MUST stay empty (validation subprocesses import `policy.regions` without sklearn).
-DIVERGENCE: `reference_labels` lives in `policy/models.py:71`; earlier spec placed it in `core`.
+`src/policy/__init__.py` MUST NOT import sklearn eagerly (validation subprocesses load `REGIONS` without it):
+it exports through a PEP 562 `__getattr__` that imports only the submodule owning the requested name.
 
-## 4. Import graph
+## 4. Boundaries, public API, import graph
+Each package exposes its public API in `__init__.py` with `__all__`. Code outside a package imports only
+`from src.<package> import name`; never `src.<package>.<module>`. Inside a package, relative imports.
+
+| Package | Public API (`__all__`) |
+|---|---|
+| `src.policy` (lazy) | `REGIONS`, `REMOTE_REGIONS`, `is_remote`, `BUDGET_BOUNDS`, `budget_share`, `allocate`, `percentile`, `logistic_regression`, `eo_gap`, `legitimate_features`, `production_features`, `Config`, `DECLARED_CONFIG`, `CommitteeModel`, `FairPipeline`, `reference_labels` |
+| `src.monitoring` | `EO_GAP_ALERT`, `Check`, `Verdict`, `run_checks`, `verdict`, `overall_status` |
+| `src.explain` | `explain` |
+| `src.evaluation` | `Candidate`, `run`, `summarize`, `scaled_utility`, `SEARCH_SPACE`, `tune`, `pareto_mask`, `plot`, `default_candidates`, `ParetoReport`, `pareto_report` |
+| `src.harness` | `decide`, `DecisionRecord`, `Action`, `ActionKind` |
+| `src.preprocessing` | `validate_datasets`, `DatasetReport`, `DataValidationError` |
+| `src.adapters` | `Inputs`, `read_inputs`, `read_table`, `read_decisions`, `write_decision`, `write_table`, `save_figure` |
+| `src.common.logging` | unchanged |
+
+Builders MAY add a name to `__all__` when an existing caller needs it; they MUST NOT import past it.
+
+Dependency direction (arrow = may import):
 ```
-main.py, model_corrige.py -> any package (composition roots; lazy imports inside commands in main.py)
-harness    -> monitoring, explain, policy, common
-monitoring -> policy
-explain    -> policy
-evaluation -> policy            (evaluation.* may import each other)
-preprocessing -> policy.regions, common
-policy     -> policy only (+ numpy, pandas, scipy, scikit-learn)
-common     -> stdlib, rich
+main.py, model_corrige.py -> adapters, harness, evaluation, monitoring, preprocessing, policy, common
+adapters      -> harness (types only), common
+harness       -> monitoring, explain, policy, common
+monitoring    -> policy
+explain       -> policy
+evaluation    -> policy
+preprocessing -> policy, common
+policy        -> (numpy, pandas, scipy, scikit-learn only)
+common        -> stdlib, rich
 ```
-Forbidden: any import of `main` or `model_corrige`; `policy` importing project modules outside `policy`;
-`monitoring`, `evaluation`, `explain`, `preprocessing` importing each other; `harness` imported by anything but roots.
-Verified with grep over `src/` and `model_corrige.py` at HEAD:
-- No forbidden import found.
-- DIVERGENCE (doc only): `policy/core.py:3` imports `scipy.stats.rankdata`; earlier spec said numpy/pandas/sklearn only.
-- `model_corrige.py:18-19` imports `policy` directly beside `harness`/`evaluation`; allowed for a root.
-- `harness` does not import `preprocessing` (earlier spec said it may).
+Forbidden: importing `main`, `model_corrige` or `adapters` from any package; `monitoring`, `evaluation`, `explain`,
+`preprocessing` importing each other; deep imports `src.<pkg>.<module>` across packages.
+File I/O (`read_csv`, `to_csv`, `savefig`, `write_text`, `open`) only in `src/adapters/`, `src/main.py`
+(argument parsing, stdout JSON), `src/common/logging` (log files) and `src/preprocessing/validation.py`
+(streams the input CSVs it validates). Domain code returns data and figures.
+No abstract port classes: one filesystem adapter, plain functions. Add a Protocol only when a second backend exists.
+Enforced by `scripts/acceptance.py` (static AST scan; proven by injecting a forbidden edge into a temp copy).
 
 ## 5. Invariants
 | Id | Invariant | Enforced by |

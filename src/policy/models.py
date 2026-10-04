@@ -5,7 +5,7 @@ import pandas as pd
 
 from .core import allocate, logistic_regression
 from .jurors import MODEL_JURORS, fit_model_jurors, holdout_auc, model_juror_scores
-from .jury import JurySettings, JuryOutcome, validate
+from .jury import JurySettings, JuryOutcome, validate, vet_swaps
 from .label_correction import CommitteeModel, correct_labels, effective_removal
 from .main_models import contributions, fit_main_model, logit
 from .reasoning import ReasoningSettings, deliberate
@@ -21,6 +21,10 @@ SINGLE_RESIDUAL_BLEND = 1.0
 SINGLE_RESIDUAL_ARTEFACT = "tabm_residual"
 ENSEMBLE_RESIDUAL_ARTEFACT = "tabm_residual_ensemble_rh"
 RESIDUAL_COLUMN = "residual_rsd"
+JUROR_ARTEFACT = "tabm_residual_jurors"
+TABM_JURORS = ("m16x2x128_cap0.25_Rh", "m16x2x128_cap0.25_RhI", "m16x2x128_cap0.5_Rh", "m16x2x128_cap0.5_RhI",
+               "m32x3x256_cap0.25_Rh", "m32x3x256_cap0.25_RhI", "m32x3x256_cap0.5_Rh", "m32x3x256_cap0.5_RhI")
+TABM_JURY_QUORUM = 0.75
 
 
 @dataclass(frozen=True)
@@ -35,12 +39,17 @@ class Config:
     strong_guard: bool = False
     residual_blend: float | None = None
     residual_artefact: str = SINGLE_RESIDUAL_ARTEFACT
+    reference_residual: bool = False
+    juror_artefact: str | None = None
+    vetted_swaps: bool = False
 
     def __post_init__(self):
         if self.target not in TARGETS:
             raise ValueError(f"Unknown target: {self.target}")
         if self.residual_blend is not None and self.target != "consensus":
             raise ValueError("A residual requires the consensus target")
+        if (self.reference_residual or self.juror_artefact) and self.residual_blend is None:
+            raise ValueError("Residual-aware jurors require a residual blend")
 
     @property
     def features(self):
@@ -67,11 +76,16 @@ ACTIVE_BOTH_CONFIG = replace(DECLARED_CONFIG, name="ensemble, jury active + reas
                              jury=ACTIVE_JURY, reasoning=ACTIVE_REASONING)
 ACTIVE_JURY_CONFIG = replace(DECLARED_CONFIG, name="ensemble, jury active", jury=ACTIVE_JURY)
 ACTIVE_REASONING_CONFIG = replace(DECLARED_CONFIG, name="ensemble, reasoning active", reasoning=ACTIVE_REASONING)
+ACTIVE_RESIDUAL_JURY_CONFIG = replace(ACTIVE_BOTH_CONFIG, name="ensemble, residual-aware jury", reference_residual=True)
+ACTIVE_MODEL_JURY_CONFIG = replace(ACTIVE_BOTH_CONFIG, name="ensemble, TabM model jury", juror_artefact=JUROR_ARTEFACT,
+                                   jury=replace(ACTIVE_JURY, jurors=TABM_JURORS, quorum=TABM_JURY_QUORUM))
+ACTIVE_SAFE_JURY_CONFIG = replace(ACTIVE_BOTH_CONFIG, name="ensemble, fairness-safe jury", vetted_swaps=True)
 CONFIGS = {config.name: config for config in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG, INCOME_BLIND_NO_JURY_CONFIG,
                                                MODEL_JURY_CONFIG,
                                                CONSENSUS_PANEL_CONFIG, AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG,
                                                DECLARED_CONFIG, ACTIVE_BOTH_CONFIG, ACTIVE_JURY_CONFIG,
-                                               ACTIVE_REASONING_CONFIG)}
+                                               ACTIVE_REASONING_CONFIG, ACTIVE_RESIDUAL_JURY_CONFIG,
+                                               ACTIVE_MODEL_JURY_CONFIG, ACTIVE_SAFE_JURY_CONFIG)}
 
 OFFSET_BOUND = 0.10
 
@@ -82,13 +96,17 @@ def check_offset(offset):
 
 
 class FairPipeline:
-    def __init__(self, config, share, residual=None):
+    def __init__(self, config, share, residual=None, juror_residuals=None):
         self.config = config
         self.share = share
         self.residual = residual
+        self.juror_residuals = juror_residuals
         self.guards = None
+        self.swap_gate = None
         if config.residual_blend is not None and residual is None:
             raise ValueError("The configuration needs the TabM residual artefact")
+        if config.juror_artefact and juror_residuals is None:
+            raise ValueError("The configuration needs the TabM juror residual artefact")
 
     def fit(self, history):
         history_share = history["decision_octroi"].mean()
@@ -116,11 +134,14 @@ class FairPipeline:
     def base_score(self, df):
         return self.committee_.rule_score(df, DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
 
+    def aligned_residual(self, residuals, df):
+        aligned = residuals.reindex(df["id_candidat"]).to_numpy(dtype=float)
+        if np.isnan(aligned).any():
+            raise ValueError(f"No TabM residual for {int(np.isnan(aligned).sum()):,} applicants")
+        return aligned
+
     def declared_score(self, df):
-        residual = self.residual.reindex(df["id_candidat"]).to_numpy(dtype=float)
-        if np.isnan(residual).any():
-            raise ValueError(f"No TabM residual for {int(np.isnan(residual).sum()):,} applicants")
-        return self.base_score(df) + self.config.residual_blend * residual
+        return self.base_score(df) + self.config.residual_blend * self.aligned_residual(self.residual, df)
 
     def model_probability(self, df):
         if self.config.residual_blend is not None:
@@ -138,9 +159,17 @@ class FairPipeline:
         mean = stats["mean"].to_numpy(dtype=float)
         std = stats["std"].to_numpy(dtype=float)
         rules = reference_scores(self.committee_, df)
+        shift = self.config.residual_blend * self.aligned_residual(self.residual, df) if self.config.reference_residual else 0.0
         return {"merit": merit, "programme_merit": (merit - mean) / std, "hours_credit": rules["consensus"],
-                **{f"ref_{name}": rules[name] for name in REVIEWER_NAMES},
-                **model_juror_scores(self.model_jurors_, df)}
+                **{f"ref_{name}": rules[name] + shift for name in REVIEWER_NAMES},
+                **model_juror_scores(self.model_jurors_, df), **self.tabm_juror_scores(df)}
+
+    def tabm_juror_scores(self, df):
+        if not self.config.juror_artefact:
+            return {}
+        base, blend = self.base_score(df), self.config.residual_blend
+        return {name: base + blend * self.aligned_residual(self.juror_residuals[name], df)
+                for name in self.juror_residuals.columns}
 
     def score(self, df, offset=0.0):
         check_offset(offset)
@@ -189,7 +218,13 @@ class FairPipeline:
         k = int(round(self.share * len(df)))
         settings = self.config.jury if jury else replace(self.config.jury, jurors=())
         scores = self.juror_scores(df) if jury else {}
-        return validate(probability, scores, k, settings, ranking=ranking)
+        outcome = validate(probability, scores, k, settings, ranking=ranking)
+        if not (jury and self.config.vetted_swaps):
+            return outcome
+        if self.swap_gate is None:
+            raise ValueError("Vetted swaps need the swap gate")
+        gate = self.swap_gate(outcome.proposed)
+        return vet_swaps(outcome, gate.admits)
 
     def predict(self, df, offset=0.0):
         return self.decide(df, offset).decisions

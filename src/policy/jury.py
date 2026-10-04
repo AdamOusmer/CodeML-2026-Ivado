@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -25,6 +25,7 @@ class JuryOutcome:
     overturned_in: np.ndarray
     audit_only: bool = False
     deliberation: object | None = None
+    held_back: int | None = None
 
 
 def percentile(values):
@@ -108,3 +109,19 @@ def validate(main_probability, juror_scores, k, settings, ranking=None) -> JuryO
         decisions[overturned_in] = 1
     return JuryOutcome(decisions, proposed, triggered, reasons, votes, overturned, overturned_out, overturned_in,
                        settings.audit_only)
+
+
+def vet_swaps(outcome: JuryOutcome, admits) -> JuryOutcome:
+    if outcome.audit_only:
+        return replace(outcome, held_back=0)
+    decisions = outcome.proposed.copy()
+    kept_out, kept_in = [], []
+    for grant, refusal in zip(outcome.overturned_out, outcome.overturned_in):
+        candidate = decisions.copy()
+        candidate[grant], candidate[refusal] = 0, 1
+        if admits(candidate):
+            decisions = candidate
+            kept_out.append(grant)
+            kept_in.append(refusal)
+    return replace(outcome, decisions=decisions, overturned_out=np.array(kept_out, dtype=int),
+                   overturned_in=np.array(kept_in, dtype=int), held_back=len(outcome.overturned_out) - len(kept_out))

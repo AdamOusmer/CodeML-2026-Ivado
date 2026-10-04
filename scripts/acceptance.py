@@ -1204,7 +1204,8 @@ def check_config_option(ctx) -> str:
     from src.harness import decide
     from src.policy import (AUDIT_PANEL_CONFIG, CONFIGS, CONSENSUS_PANEL_CONFIG, DECLARED_CONFIG, INCOME_BLIND_CONFIG,
                             INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, SCORING_FEATURES,
-                            ACTIVE_BOTH_CONFIG, ACTIVE_JURY_CONFIG, ACTIVE_REASONING_CONFIG, SINGLE_RESIDUAL_CONFIG, VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
+                            ACTIVE_BOTH_CONFIG, ACTIVE_JURY_CONFIG, ACTIVE_MODEL_JURY_CONFIG, ACTIVE_REASONING_CONFIG,
+                            ACTIVE_RESIDUAL_JURY_CONFIG, ACTIVE_SAFE_JURY_CONFIG, SINGLE_RESIDUAL_CONFIG, VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
 
     history, batch = ctx["history"], ctx["batch"]
     assert DECLARED_CONFIG.residual_blend is not None and DECLARED_CONFIG.features == SCORING_FEATURES, "declared config"
@@ -1213,7 +1214,8 @@ def check_config_option(ctx) -> str:
     assert {c.name: c for c in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG,
                               INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, CONSENSUS_PANEL_CONFIG,
                               AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG, DECLARED_CONFIG, ACTIVE_BOTH_CONFIG,
-                              ACTIVE_JURY_CONFIG, ACTIVE_REASONING_CONFIG)} == CONFIGS, "CONFIGS registry"
+                              ACTIVE_JURY_CONFIG, ACTIVE_REASONING_CONFIG, ACTIVE_RESIDUAL_JURY_CONFIG,
+                              ACTIVE_MODEL_JURY_CONFIG, ACTIVE_SAFE_JURY_CONFIG)} == CONFIGS, "CONFIGS registry"
     declared = ctx["baseline"]
     share = budget_share(history)
     for config in (INCOME_BLIND_CONFIG,):
@@ -1973,6 +1975,169 @@ def check_declared_pipeline(ctx) -> str:
     return f"top-{k} of base + residual; audit mode: {record.jury['triggered']} reviewed, no swap, no move; income weight within [{low}, {high}]"
 
 
+JUROR_DIR = ROOT / "models/tabm_residual_jurors"
+SWEEP_DIR = Path.home() / "Downloads/equialgo_tabm_sweep_history_base"
+ENSEMBLE_MEMBERS = ("m16x2x128_cap0.25_Rh", "m16x2x128_cap0.5_Rh", "m32x3x256_cap0.25_Rh", "m32x3x256_cap0.5_Rh")
+
+
+def juror_copy(ctx, name: str) -> Path:
+    directory = ctx["tmp"] / name
+    shutil.copytree(JUROR_DIR, directory)
+    return directory
+
+
+def check_residual_jurors_artefact(ctx) -> str:
+    from src.adapters import read_juror_residuals
+    from src.policy import ACTIVE_MODEL_JURY_CONFIG, TABM_JURORS
+
+    batch_ids = ctx["batch"]["id_candidat"]
+    manifest = json.loads((JUROR_DIR / "manifest.json").read_text())
+    table = read_juror_residuals(JUROR_DIR, HISTORY_PATH, BATCH_PATH, batch_ids, TABM_JURORS)
+    assert table.shape == (4000, 8) and np.isfinite(table.to_numpy()).all(), table.shape
+    members = manifest["members"]
+    assert [m["cfg_id"] for m in members] == list(TABM_JURORS), "member order"
+    assert all(m["oof_logloss_improvement"] > 0 for m in members), "member OOF improvements"
+    assert all(m["monotonicity"]["grid_status"] == "GRIDPASS" for m in members), "member monotonicity"
+    assert all(m["monotonicity"]["min_R_derivative_at_declared_blend"] > 0 and
+               m["monotonicity"]["min_hours_derivative_at_declared_blend"] > 0 for m in members), "derivatives"
+    sources = [m["source_sha256"] for m in members]
+    assert len(set(sources)) == 8 and all(re.fullmatch("[0-9a-f]{64}", value) for value in sources), "source hashes"
+    assert manifest["source_hashes"] == dict(zip(TABM_JURORS, sources)), "source hash map"
+    ensemble = json.loads((RESIDUAL_DIR / "manifest.json").read_text())["source_hashes"]
+    assert all(ensemble[name] == manifest["source_hashes"][name] for name in ENSEMBLE_MEMBERS), "shared sources differ"
+    mean = table[list(ENSEMBLE_MEMBERS)].mean(axis=1)
+    assert np.allclose(mean.reindex(ctx["residual"].index), ctx["residual"], atol=1e-12), "ensemble is not the mean of its jurors"
+    verified = "sweep arrays absent, source hashes not re-read"
+    if SWEEP_DIR.is_dir():
+        for member in members:
+            source = SWEEP_DIR / member["source_file"]
+            assert sha256_bytes(source.read_bytes()) == member["source_sha256"], f"{member['cfg_id']}: source hash"
+            arrays = np.load(source, allow_pickle=True)
+            stored = pd.Series(arrays["mean_residual"], index=arrays["id_candidat"]).reindex(table.index)
+            assert np.allclose(stored, table[member["cfg_id"]], atol=1e-12), f"{member['cfg_id']}: residual values"
+        verified = "sweep arrays re-read: source hashes and residual values match"
+    tampered = juror_copy(ctx, "juror_values")
+    path = tampered / "residuals.csv"
+    path.write_text(path.read_text().replace(",", ",9", 1))
+    rejected(lambda: read_juror_residuals(tampered, HISTORY_PATH, BATCH_PATH, batch_ids, TABM_JURORS), "residuals.csv")
+    wrong_data = juror_copy(ctx, "juror_manifest")
+    document = json.loads((wrong_data / "manifest.json").read_text())
+    document["input_hashes"]["history"] = "0" * 64
+    (wrong_data / "manifest.json").write_text(json.dumps(document))
+    rejected(lambda: read_juror_residuals(wrong_data, HISTORY_PATH, BATCH_PATH, batch_ids, TABM_JURORS), HISTORY_PATH.name)
+    renamed = juror_copy(ctx, "juror_members")
+    document = json.loads((renamed / "manifest.json").read_text())
+    document["members"].reverse()
+    (renamed / "manifest.json").write_text(json.dumps(document))
+    rejected(lambda: read_juror_residuals(renamed, HISTORY_PATH, BATCH_PATH, batch_ids, TABM_JURORS), "members")
+    other_batch = ctx["tmp"] / "other_juror_batch.csv"
+    ctx["batch"].iloc[:-1].to_csv(other_batch, index=False)
+    rejected(lambda: read_juror_residuals(JUROR_DIR, HISTORY_PATH, other_batch, batch_ids, TABM_JURORS), "other_juror_batch.csv")
+    rejected(lambda: read_juror_residuals(ctx["tmp"] / "absent", HISTORY_PATH, BATCH_PATH, batch_ids, TABM_JURORS), "incomplete")
+    config = ACTIVE_MODEL_JURY_CONFIG
+    assert config.jury.jurors == TABM_JURORS and config.jury.quorum == 0.75 and not config.jury.audit_only, config.jury
+    return (f"eight jurors with OOF gain and GRIDPASS, ensemble residual is the mean of its four jurors, {verified}; "
+            f"tampered values, history hash, member order, batch file and missing directory rejected; quorum 0.75")
+
+
+def check_residual_aware_jurors(ctx) -> str:
+    from src.policy import (ACTIVE_MODEL_JURY_CONFIG, ACTIVE_RESIDUAL_JURY_CONFIG, DECLARED_CONFIG, DECLARED_RESIDUAL_BLEND,
+                            REFERENCE_JURORS, TABM_JURORS, FairPipeline, budget_share)
+    from src.adapters import read_juror_residuals
+
+    history, batch, residual = ctx["history"], ctx["batch"], ctx["residual"]
+    share = budget_share(history)
+    plain = declared_pipeline(ctx).juror_scores(batch)
+    aware = FairPipeline(ACTIVE_RESIDUAL_JURY_CONFIG, share, residual).fit(history).juror_scores(batch)
+    shift = DECLARED_RESIDUAL_BLEND * residual.reindex(batch["id_candidat"]).to_numpy()
+    for name in REFERENCE_JURORS:
+        assert np.allclose(aware[name] - plain[name], shift, atol=1e-12), f"{name}: not rule + blend x residual"
+    assert np.array_equal(aware["merit"], plain["merit"]), "non-reference juror changed"
+    jurors = read_juror_residuals(JUROR_DIR, HISTORY_PATH, BATCH_PATH, batch["id_candidat"], TABM_JURORS)
+    model = FairPipeline(ACTIVE_MODEL_JURY_CONFIG, share, residual, jurors).fit(history)
+    scores = model.juror_scores(batch)
+    base = model.base_score(batch)
+    for name in TABM_JURORS:
+        expected = base + DECLARED_RESIDUAL_BLEND * jurors[name].reindex(batch["id_candidat"]).to_numpy()
+        assert np.allclose(scores[name], expected, atol=1e-12), f"{name}: not base + blend x juror residual"
+    shuffled = batch.iloc[::-1].reset_index(drop=True)
+    assert np.allclose(model.juror_scores(shuffled)[TABM_JURORS[0]][::-1], scores[TABM_JURORS[0]]), "juror residual not aligned by id"
+    try:
+        FairPipeline(ACTIVE_MODEL_JURY_CONFIG, share, residual)
+    except ValueError as error:
+        assert "juror residual artefact" in str(error), error
+    else:
+        raise AssertionError("model jury built without its artefact")
+    assert DECLARED_CONFIG.reference_residual is False and DECLARED_CONFIG.juror_artefact is None, "declared config changed"
+    return (f"reference jurors = rule + {DECLARED_RESIDUAL_BLEND} x residual (same alignment); "
+            f"TabM jurors = base + {DECLARED_RESIDUAL_BLEND} x own residual, id-aligned; artefact required")
+
+
+def check_vetted_swaps(ctx) -> str:
+    from dataclasses import replace
+
+    from src.harness.reasoning_gate import guard_checks, worse
+    from src.harness.strong_guard import strong_measurer
+    from src.harness.swap_gate import swap_gate
+    from src.monitoring import EO_GAP_ALERT
+    from src.policy import ACTIVE_SAFE_JURY_CONFIG, FairPipeline, budget_share
+
+    history, batch, residual = ctx["history"], ctx["batch"], ctx["residual"]
+    share = budget_share(history)
+    open_pipeline = FairPipeline(replace(ACTIVE_SAFE_JURY_CONFIG, vetted_swaps=False), share, residual).fit(history)
+    proposed = open_pipeline.jury_outcome(batch)
+    pairs = list(zip(proposed.overturned_out, proposed.overturned_in))
+    assert len(pairs) >= 3, f"too few swap pairs to test the gate: {len(pairs)}"
+
+    from src.policy import vet_swaps
+
+    seen = []
+    rejected_pair = pairs[1]
+
+    def stub(candidate):
+        changed = np.flatnonzero(candidate != proposed.proposed)
+        seen.append(changed)
+        return not (candidate[rejected_pair[0]] == 0 and candidate[rejected_pair[1]] == 1)
+
+    vetted = vet_swaps(proposed, stub)
+    assert vetted.held_back == 1 and len(vetted.overturned_out) == len(pairs) - 1, "one pair should be held back"
+    assert len(seen) == len(pairs), "every pair is tried once, in order, until none remain"
+    first = seen[0]
+    assert set(first) == {pairs[0][0], pairs[0][1]}, "first candidate is not the strongest pair alone"
+    assert set(seen[1]) == {pairs[0][0], pairs[0][1], *rejected_pair}, "second candidate adds exactly the next pair"
+    assert set(seen[2]) == {pairs[0][0], pairs[0][1], *pairs[2]}, "a rejected pair stays out of later candidates"
+    assert vetted.decisions.sum() == proposed.proposed.sum(), "k not exact"
+    assert vetted.decisions[rejected_pair[0]] == 1 and vetted.decisions[rejected_pair[1]] == 0, "rejected pair applied"
+    nothing = vet_swaps(proposed, lambda candidate: False)
+    assert np.array_equal(nothing.decisions, proposed.proposed) and nothing.held_back == len(pairs), "stop when none qualify"
+
+    try:
+        FairPipeline(ACTIVE_SAFE_JURY_CONFIG, share, residual).fit(history).jury_outcome(batch)
+    except ValueError as error:
+        assert "swap gate" in str(error), error
+    else:
+        raise AssertionError("vetted swaps ran without a gate")
+
+    record = ctx["baseline_decide"](config=ACTIVE_SAFE_JURY_CONFIG, residual=residual)
+    assert record.status == "published" and "REVERT_JURY" not in action_kinds(record), action_kinds(record)
+    applied = int((record.decisions != record.proposed).sum()) // 2
+    assert applied + record.jury["held_back_pairs"] == len(pairs), (applied, record.jury, len(pairs))
+    assert int(record.decisions.sum()) == int(record.proposed.sum()) == 1598, "k not exact"
+    checks = guard_checks(open_pipeline, history, batch, share, EO_GAP_ALERT)
+    strong = strong_measurer(open_pipeline, history, batch, share)
+    measure = lambda decisions: [*checks(decisions), *strong(decisions).checks]
+    before = {check.name: check for check in measure(record.proposed)}
+    worsened = [check.name for check in measure(record.decisions) if worse(check, before[check.name])]
+    assert not worsened, f"checks worse after vetted swaps: {worsened}"
+    effect = next(check for check in record.jury_guard.checks if "fairness effect" in check.name)
+    assert effect.value <= 1e-9 and effect.status == "OK", (effect.value, effect.status)
+    gate = swap_gate(open_pipeline, history, batch, share)(record.proposed)
+    assert gate.admits(record.decisions) and gate.admits(record.proposed), "gate rejects its own accepted outcome"
+    return (f"{len(pairs)} proposed pairs: stub gate holds back exactly the rejected pair, tries one pair at a time in strength order, "
+            f"stops with none left; real gate applies {applied}, holds back {record.jury['held_back_pairs']}, k exact, "
+            f"no monitoring/consensus/strong check worse, jury fairness effect {effect.value:+.4f}")
+
+
 def check_no_derived_constants(ctx) -> str:
     pattern = re.compile("|".join([*(re.escape(word) for word in FORBIDDEN_WORDS), *FORBIDDEN_NUMBERS]), re.IGNORECASE)
     hits = []
@@ -2109,6 +2274,9 @@ def main() -> int:
     run_check("residual_artefact", check_residual_artefact, ctx)
     run_check("residual_required", check_residual_required, ctx)
     run_check("declared_pipeline", check_declared_pipeline, ctx)
+    run_check("residual_jurors_artefact", check_residual_jurors_artefact, ctx)
+    run_check("residual_aware_jurors", check_residual_aware_jurors, ctx)
+    run_check("vetted_swaps", check_vetted_swaps, ctx)
     run_check("no_derived_constants", check_no_derived_constants, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} passed in {time.time() - started:.0f}s; failed: {failures}", flush=True)

@@ -11,6 +11,7 @@ from .postprocessing import POSTPROCESSING_NODES, alerting, postprocessing_graph
 from .reasoning_gate import reasoning_gate
 from .record import Action, ActionKind, DecisionRecord, InputError
 from .strong_guard import strong_measurer
+from .swap_gate import swap_gate
 
 OUTPUT_REASON = "output guard rejected the output"
 JURY_GUARD_REASON = "jury guard alert, jury outcome not published"
@@ -24,13 +25,16 @@ logger = get_logger("harness")
 
 
 def jury_counts(outcome) -> dict:
-    return {
+    counts = {
         "triggered": int(outcome.triggered.sum()),
         "overturned_out": len(outcome.overturned_out),
         "overturned_in": len(outcome.overturned_in),
         "applied": not outcome.audit_only,
         "reasons": {name: sum(name in reasons for reasons in outcome.reasons) for name in JURY_REASONS},
     }
+    if outcome.held_back is not None:
+        counts["held_back_pairs"] = outcome.held_back
+    return counts
 
 
 def check_ids(batch: pd.DataFrame) -> None:
@@ -90,15 +94,17 @@ def block_action(correctable, final_verdict, offset, issues, consensus_verdict, 
 
 
 def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, str],
-           config: Config = DECLARED_CONFIG, residual: pd.Series | None = None, eo_gap_alert: float = EO_GAP_ALERT,
-           nodes=POSTPROCESSING_NODES) -> DecisionRecord:
+           config: Config = DECLARED_CONFIG, residual: pd.Series | None = None,
+           juror_residuals: pd.DataFrame | None = None, eo_gap_alert: float = EO_GAP_ALERT, nodes=POSTPROCESSING_NODES) -> DecisionRecord:
     check_ids(batch)
     try:
         share = budget_share(history)
     except ValueError as error:
         raise InputError(str(error)) from error
     actions = [Action(ActionKind.SELECT_CONFIG, "declared configuration", {"config": config.name})]
-    pipeline = FairPipeline(config, share, residual).fit(history)
+    pipeline = FairPipeline(config, share, residual, juror_residuals).fit(history)
+    if config.vetted_swaps:
+        pipeline.swap_gate = swap_gate(pipeline, history, batch, share, eo_gap_alert)
     if config.reasoning and config.reasoning.apply_moves:
         pipeline.guards = reasoning_gate(pipeline, history, batch, share, eo_gap_alert)
     seeds = {"pipeline": pipeline, "history": history, "batch": batch, "share": share, "eo_gap_alert": eo_gap_alert,
@@ -124,7 +130,8 @@ def decide(history: pd.DataFrame, batch: pd.DataFrame, input_hashes: dict[str, s
                                "offset_moved": len(offset_moved_ids), "alerts": alerts}))
     if reverted:
         actions.append(Action(ActionKind.REVERT_JURY, JURY_GUARD_REASON,
-                              {"checks": alerting(guard), "offset": offset}))
+                              {"checks": alerting(guard), "offset": offset,
+                               "proposed_swaps": len(shifted_outcome.overturned_out)}))
     if artifacts["status"] == "blocked":
         actions.append(block_action(artifacts["correctable"], final_verdict, offset, issues, artifacts["consensus"],
                                     artifacts["strong"]))

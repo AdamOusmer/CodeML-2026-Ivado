@@ -60,6 +60,34 @@ def read_residual(directory: Path, history_path: Path, batch_path: Path, batch_i
     return residual
 
 
+JUROR_FILE = "residuals.csv"
+
+
+def read_juror_residuals(directory: Path, history_path: Path, batch_path: Path, batch_ids: pd.Series,
+                         jurors: tuple[str, ...]) -> pd.DataFrame:
+    residuals_path, manifest_path = directory / JUROR_FILE, directory / RESIDUAL_MANIFEST
+    for path in (residuals_path, manifest_path):
+        if not path.is_file():
+            raise InputError(f"TabM juror artefact incomplete: {path} not found")
+    manifest = json.loads(manifest_path.read_text())
+    expected = {JUROR_FILE: (manifest.get("residuals_sha256"), sha256(residuals_path)),
+                history_path.name: (manifest.get("input_hashes", {}).get("history"), sha256(history_path)),
+                batch_path.name: (manifest.get("input_hashes", {}).get("candidates"), sha256(batch_path))}
+    for name, (declared, actual) in expected.items():
+        if declared != actual:
+            raise InputError(f"TabM juror artefact does not match {name}: manifest {declared}, found {actual}")
+    if [member["cfg_id"] for member in manifest.get("members", [])] != list(jurors):
+        raise InputError("TabM juror artefact members differ from the declared jurors")
+    table = read_table(residuals_path).set_index("id_candidat")
+    if list(table.columns) != list(jurors):
+        raise InputError("TabM juror residual columns differ from the declared jurors")
+    if not table.index.is_unique or set(table.index) != set(batch_ids):
+        raise InputError("TabM juror residual ids differ from the batch ids")
+    if not np.isfinite(table.to_numpy(dtype=float)).all():
+        raise InputError("TabM juror residuals contain non-finite values")
+    return table
+
+
 def read_decisions(path: Path) -> pd.Series:
     return read_table(path).set_index("id_candidat")["decision_octroi"]
 

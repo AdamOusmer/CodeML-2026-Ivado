@@ -1,67 +1,3 @@
-# ÉquiAlgo — our solution
-
-The production model's bias is not noise: it is one flat regional penalty applied
-after merit. We remove that penalty from the historical training labels, then
-train a region-blind logistic regression on R score, log income, and hours
-worked. A validator jury (a merit juror and a programme-merit juror, both must
-agree to overturn) reviews borderline decisions before publication, and an
-automated harness audits the final decisions, applying at most one bounded
-correction or blocking the run. The grant budget matches the historical rate
-exactly: 39.94%.
-
-### Results
-
-| Metric | Baseline (production RF) | Declared (validator jury) |
-|---|---|---|
-| EO gap vs corrected committee | 0.253 | 0.013 |
-| EO gap vs merit | 0.247 | 0.010 |
-| Grants | — | 1,598 |
-| Monitoring checks | — | all OK |
-| Acceptance checks | — | 34/34 |
-
-Note: "corrected" and "merit" are our own proxy references, not the hidden
-reference standard used for judging.
-
-### Deliverables
-
-- `predictions.csv`
-- `audit_rapport.ipynb`
-- `model_corrige.py` + `pareto_front.png`
-- `presentation.pdf`
-- `docs/MONITORING_PLAN.md`
-
-### Quick start
-
-With [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv sync
-OMP_NUM_THREADS=2 uv run python model_corrige.py
-uv run python -m src.main decide --out-dir out
-uv run python -m src.main monitor
-OMP_NUM_THREADS=2 uv run python scripts/acceptance.py
-```
-
-With pip:
-
-```bash
-python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-```
-
-`data/` must contain the two supplied CSVs before running.
-
-### Documentation
-
-- [docs/HARNESS_SPEC.md](docs/HARNESS_SPEC.md)
-- [docs/JURY_SPEC.md](docs/JURY_SPEC.md)
-- [docs/PREPROCESSING_SPEC.md](docs/PREPROCESSING_SPEC.md)
-- [docs/FINDINGS.md](docs/FINDINGS.md)
-- [docs/MONITORING_PLAN.md](docs/MONITORING_PLAN.md)
-
----
-
-Original challenge brief:
-
 # ÉquiAlgo: fair student financing
 
 Engineering and Computer Science Hackathon 2026. 24-hour challenge.
@@ -191,10 +127,8 @@ With [uv](https://docs.astral.sh/uv/) (Python version in `.python-version`, lock
 
 ```bash
 uv sync
-OMP_NUM_THREADS=2 uv run python model_corrige.py
-uv run python -m src.main decide --out-dir out
-uv run python -m src.main monitor
-OMP_NUM_THREADS=2 uv run python scripts/acceptance.py
+uv run python -m src.main check-data
+uv run python model_corrige.py
 ```
 
 With pip, as in the original setup:
@@ -202,11 +136,18 @@ With pip, as in the original setup:
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+python -m src.main check-data
+python model_corrige.py
 ```
 
 `data/` is not versioned: copy the two supplied CSVs into `data/` before running.
 
 `model_corrige.py` writes `predictions.csv`, `resultats_pareto.csv` and `pareto_front.png`.
-`decide` runs the validator jury and writes the published decisions to `--out-dir`.
-`monitor` runs the monitoring checks against the final decisions.
-`scripts/acceptance.py` runs the 34 acceptance checks.
+
+`check-data` validates both CSVs in parallel processes: schema, row counts, value
+ranges, programs, regions, postal-code and ID formats, unique IDs, and disjoint
+historical and evaluation IDs. Options: `--json`, `--plain`, `--quiet`, `--verbose`,
+`--no-progress`, `--log-dir DIR`, `--no-log-file`, `--train-file CSV`,
+`--evaluation-file CSV`, `--expected-train-rows N`, `--expected-evaluation-rows N`.
+Exit codes: 0 valid, 1 invalid data, 2 bad arguments, 130 interrupted. Each run
+writes a timestamped DEBUG log to `logs/`.

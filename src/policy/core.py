@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -35,13 +36,24 @@ def percentile(values):
     return rankdata(values) / len(values)
 
 
-def logistic_regression():
-    return make_pipeline(StandardScaler(), LogisticRegression(max_iter=3000))
+def auc(truth, scores):
+    truth = np.asarray(truth)
+    if truth.min() == truth.max():
+        return np.nan
+    return float(roc_auc_score(truth, scores))
 
 
-def eo_gap(decisions, y_ref, remote):
+def logistic_regression(c=1.0):
+    return make_pipeline(StandardScaler(), LogisticRegression(C=c, max_iter=3000))
+
+
+def signed_eo_gap(decisions, y_ref, remote):
     deserving = y_ref == 1
     centre, far = deserving & (remote == 0), deserving & (remote == 1)
     if not (centre.any() and far.any()):
         return np.nan
-    return abs(decisions[centre].mean() - decisions[far].mean())
+    return decisions[centre].mean() - decisions[far].mean()
+
+
+def eo_gap(decisions, y_ref, remote):
+    return abs(signed_eo_gap(decisions, y_ref, remote))

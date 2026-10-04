@@ -36,6 +36,30 @@ def read_inputs(history_path: Path, batch_path: Path) -> Inputs:
                   {path.name: sha256(path) for path in (history_path, batch_path)})
 
 
+RESIDUAL_FILE = "residuals.csv"
+RESIDUAL_MANIFEST = "manifest.json"
+
+
+def read_residual(directory: Path, history_path: Path, batch_path: Path, batch_ids: pd.Series) -> pd.Series:
+    residuals_path, manifest_path = directory / RESIDUAL_FILE, directory / RESIDUAL_MANIFEST
+    for path in (residuals_path, manifest_path):
+        if not path.is_file():
+            raise InputError(f"TabM residual artefact incomplete: {path} not found")
+    manifest = json.loads(manifest_path.read_text())
+    expected = {RESIDUAL_FILE: (manifest.get("residuals_sha256"), sha256(residuals_path)),
+                history_path.name: (manifest.get("input_hashes", {}).get("history"), sha256(history_path)),
+                batch_path.name: (manifest.get("input_hashes", {}).get("candidates"), sha256(batch_path))}
+    for name, (declared, actual) in expected.items():
+        if declared != actual:
+            raise InputError(f"TabM residual artefact does not match {name}: manifest {declared}, found {actual}")
+    residual = read_table(residuals_path).set_index("id_candidat")["residual_rsd"]
+    if not residual.index.is_unique or set(residual.index) != set(batch_ids):
+        raise InputError("TabM residual ids differ from the batch ids")
+    if not np.isfinite(residual).all():
+        raise InputError("TabM residual contains non-finite values")
+    return residual
+
+
 def read_decisions(path: Path) -> pd.Series:
     return read_table(path).set_index("id_candidat")["decision_octroi"]
 

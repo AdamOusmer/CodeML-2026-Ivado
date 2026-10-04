@@ -1,12 +1,6 @@
-"""ÉquiAlgo mitigation: Pareto front over fairness settings, then automated decisions for the candidates.
+import os
 
-1. Preprocessing   : validate both frames; the committee is rebuilt on 8 legitimate features, the main model scores on R, log income and hours; region is kept for auditing, never for default scoring.
-2. Fairness (pre)  : remove the committee's remote-region penalty from the training labels.
-3. Main model      : region-blind logistic regression trained on the corrected labels.
-4. Jury            : rank vote between fairness policies (main model, academic merit).
-5. Allocation      : grant the historical share of applicants, the institution's budget.
-6. Harness         : audit the decisions, apply a bounded correction on a fairness alert, or block.
-"""
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import sys
 from pathlib import Path

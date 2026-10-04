@@ -10,6 +10,7 @@ class JurySettings:
     disagree: float = 0.30
     quorum: float = 1.0
     jurors: tuple[str, ...] = ("merit", "programme_merit")
+    audit_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class JuryOutcome:
     overturned: np.ndarray
     overturned_out: np.ndarray
     overturned_in: np.ndarray
+    audit_only: bool = False
+    deliberation: object | None = None
 
 
 def percentile(values):
@@ -100,6 +103,8 @@ def validate(main_probability, juror_scores, k, settings, ranking=None) -> JuryO
         overturned_out = strongest(grants, strength, rank, count, descending_rank=True)
         overturned_in = strongest(refusals, strength, rank, count)
     decisions = proposed.copy()
-    decisions[overturned_out] = 0
-    decisions[overturned_in] = 1
-    return JuryOutcome(decisions, proposed, triggered, reasons, votes, overturned, overturned_out, overturned_in)
+    if not settings.audit_only:
+        decisions[overturned_out] = 0
+        decisions[overturned_in] = 1
+    return JuryOutcome(decisions, proposed, triggered, reasons, votes, overturned, overturned_out, overturned_in,
+                       settings.audit_only)

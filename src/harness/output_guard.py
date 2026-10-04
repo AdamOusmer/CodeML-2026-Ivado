@@ -46,7 +46,7 @@ def decision_issues(n: int, decisions: np.ndarray, k: int) -> list[str]:
     return issues
 
 
-def submission_issues(batch: pd.DataFrame, ids, decisions, k: int) -> list[str]:
+def output_issues(batch: pd.DataFrame, ids, decisions, k: int) -> list[str]:
     batch_ids = batch["id_candidat"].to_numpy(dtype=object)
     ids = np.asarray(ids, dtype=object)
     decisions = np.asarray(decisions)

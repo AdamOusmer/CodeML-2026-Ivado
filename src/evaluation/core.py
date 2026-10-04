@@ -7,11 +7,13 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.policy import BUDGET_BOUNDS, eo_gap, is_remote, reference_labels
+from src.policy import BUDGET_BOUNDS, REVIEWER_NAMES, eo_gap, is_remote, reference_labels, signed_eo_gap
 
 Decide = Callable[[pd.DataFrame, pd.DataFrame, float], np.ndarray]
-METRICS = ["grant_rate", "rate_centre", "rate_remote", "dp_gap", "eo_gap_corrected", "eo_gap_merit",
+METRICS = ["grant_rate", "rate_centre", "rate_remote", "dp_gap", "eo_gap_reviewers_mean", "agree_reviewers_mean",
+           "eo_gap_consensus", "agree_consensus", "g_merit", "eo_gap_corrected", "eo_gap_merit",
            "eo_gap_historical", "agree_corrected", "agree_merit", "acc_historical"]
+REVIEWER_REFERENCES = [f"reviewer_{name}" for name in REVIEWER_NAMES]
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ def scaled_utility(decisions, reference, share):
 def evaluate(name, family, decisions, references, remote, setting=np.nan):
     low, high = BUDGET_BOUNDS
     centre_rate, remote_rate = decisions[remote == 0].mean(), decisions[remote == 1].mean()
+    reviewer_gaps = [eo_gap(decisions, references[key], remote) for key in REVIEWER_REFERENCES]
+    reviewer_agreements = [(decisions == references[key]).mean() for key in REVIEWER_REFERENCES]
     return {
         "method": name,
         "family": family,
@@ -39,6 +43,11 @@ def evaluate(name, family, decisions, references, remote, setting=np.nan):
         "rate_centre": centre_rate,
         "rate_remote": remote_rate,
         "dp_gap": abs(centre_rate - remote_rate),
+        "eo_gap_reviewers_mean": float(np.mean(reviewer_gaps)),
+        "agree_reviewers_mean": float(np.mean(reviewer_agreements)),
+        "eo_gap_consensus": eo_gap(decisions, references["consensus"], remote),
+        "agree_consensus": (decisions == references["consensus"]).mean(),
+        "g_merit": signed_eo_gap(decisions, references["merit"], remote),
         "eo_gap_corrected": eo_gap(decisions, references["corrected"], remote),
         "eo_gap_merit": eo_gap(decisions, references["merit"], remote),
         "eo_gap_historical": eo_gap(decisions, references["historical"], remote),

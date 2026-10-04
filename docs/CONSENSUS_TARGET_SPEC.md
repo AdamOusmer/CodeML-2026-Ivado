@@ -39,9 +39,10 @@ Décidé après cinq revues d'équité indépendantes (`docs/reviews/CONSENSUS.m
 - Appris sur l'historique seulement, hors machine (`kaggle/train.py`, GPU Kaggle gratuit) : TabM borné, entrées cote R
   et heures seulement, au-dessus d'un modèle linéaire figé ; pénalité du résidu choisie par la perte logarithmique
   hors échantillon (5 plis × 3 graines) ; grille de monotonie en R et en heures.
-- Artefact `models/tabm_residual/` : `residuals.csv` (`id_candidat, residual_rsd`, unités de cote R) et `manifest.json`
-  (SHA-256 des entrées, graines, plis, sélection de la pénalité, grille de monotonie, versions).
-- Score déclaré = base + `DECLARED_RESIDUAL_BLEND` × résidu, avec un mélange de 1 : **choix de modélisation déclaré,
+- Artefact `models/tabm_residual_ensemble_rh/` : `residuals.csv` (`id_candidat, residual_rsd`, unités de cote R, moyenne
+  de 4 réseaux TabM R + heures) et `manifest.json` (SHA-256 des entrées et des sources, graines, plis, pénalités,
+  gains hors échantillon et monotonie de chaque membre).
+- Score déclaré = base + `DECLARED_RESIDUAL_BLEND` × résidu, avec un mélange de 2,5 : **choix de modélisation déclaré,
   retenu par essais**, justifié par l'amélioration de la perte logarithmique historique hors échantillon (manifeste).
 - Chargé par `src/adapters`, SHA-256 vérifié contre le manifeste et contre les deux CSV décidés ; sans artefact, la
   configuration déclarée échoue clairement.

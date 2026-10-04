@@ -6,7 +6,7 @@ from pathlib import Path
 from src.adapters import RESIDUAL_FILE, read_inputs, sha256, read_residual, save_figure, write_decision, write_table
 from src.common.graph import Graph, Node
 from src.common.logging import get_logger
-from src.evaluation import pareto_report
+from src.evaluation import declared_pipeline_sweep, pareto_report
 from src.harness import DecisionRecord, decide
 from src.policy import DECLARED_CONFIG, correction_report, report_warnings
 from src.preprocessing import validate_frames
@@ -61,9 +61,25 @@ def attach_correction(record: DecisionRecord, report) -> DecisionRecord:
 
 def write_pareto(report, out_dir: Path) -> list[Path]:
     table_path = Path(out_dir) / "resultats_pareto.csv"
-    figure_path = Path(out_dir) / "pareto_front.png"
+    figure_path = Path(out_dir) / "pareto_comparaison.png"
     write_table(report.summary, table_path)
     save_figure(report.figure, figure_path)
+    return [table_path, figure_path]
+
+
+def sweep_declared(history, batch, residual, share, record):
+    if residual is None:
+        return None
+    return declared_pipeline_sweep(history, batch, residual, share, record.ids, record.decisions)
+
+
+def write_declared_sweep(sweep, out_dir: Path) -> list[Path]:
+    if sweep is None:
+        return []
+    table_path = Path(out_dir) / "resultats_pareto_declare.csv"
+    figure_path = Path(out_dir) / "pareto_front.png"
+    write_table(sweep.summary, table_path)
+    save_figure(sweep.figure, figure_path)
     return [table_path, figure_path]
 
 
@@ -86,6 +102,8 @@ DECISION_NODES = (
 PARETO_NODES = (
     Node("pareto", pareto_report, ("history", "share", "splits", "pareto_workers")),
     Node("pareto_written", write_pareto, ("pareto", "out_dir")),
+    Node("declared_sweep", sweep_declared, ("history", "batch", "residual", "share", "record")),
+    Node("declared_sweep_written", write_declared_sweep, ("declared_sweep", "out_dir")),
 )
 
 DECISION = Graph(DECISION_NODES)

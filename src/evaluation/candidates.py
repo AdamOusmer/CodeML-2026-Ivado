@@ -23,6 +23,8 @@ from src.policy import (
 )
 
 from .core import Candidate, run, summarize
+from .declared_sweep import REMOVALS as DECLARED_REMOVALS
+from .declared_sweep import declared_score
 from .pareto import pareto_mask, plot
 
 SEED = 42
@@ -89,6 +91,12 @@ def committee_removal(removal):
     return decide
 
 
+def declared_base_removal(removal):
+    def decide(train, test, share):
+        return allocate(declared_score(CommitteeModel().fit(train, labels(train)), test, removal=removal), share)
+    return decide
+
+
 def pipeline(config):
     def decide(train, test, share):
         return FairPipeline(config, share).fit(train).predict(test)
@@ -112,6 +120,8 @@ def default_candidates() -> list[Candidate]:
         *[Candidate(f"committee, penalty removal={removal:.1f}", "penalty removal sweep", committee_removal(removal), removal)
           for removal in REMOVALS],
         *[Candidate(f"jury, band {band}", "jury band sweep", pipeline(band_config(band)), band) for band in BAND_SWEEP],
+        *[Candidate(f"declared base, penalty removal={removal:.1f}", "declared base removal sweep",
+                    declared_base_removal(removal), removal) for removal in DECLARED_REMOVALS[::2]],
         Candidate(CORRECTED_NO_JURY_CONFIG.name, "full pipeline", pipeline(CORRECTED_NO_JURY_CONFIG)),
         Candidate(VALIDATOR_JURY_CONFIG.name, "full pipeline", pipeline(VALIDATOR_JURY_CONFIG)),
         Candidate(INCOME_BLIND_CONFIG.name, "full pipeline", pipeline(INCOME_BLIND_CONFIG)),

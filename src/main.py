@@ -224,7 +224,7 @@ def run_pareto(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
         history = read_table(args.history)
         report = pareto_report(history, budget_share(history), args.splits, args.workers)
         write_table(report.summary, args.out_dir / "resultats_pareto.csv")
-        save_figure(report.figure, args.out_dir / "pareto_front.png")
+        save_figure(report.figure, args.out_dir / "pareto_comparaison.png")
     if not quiet:
         print(report.table.round(3).to_string(index=False))
     return 0

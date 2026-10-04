@@ -34,6 +34,7 @@ def evaluate(name, family, decisions, references, remote, setting=np.nan):
     centre_rate, remote_rate = decisions[remote == 0].mean(), decisions[remote == 1].mean()
     reviewer_gaps = [eo_gap(decisions, references[key], remote) for key in REVIEWER_REFERENCES]
     reviewer_agreements = [(decisions == references[key]).mean() for key in REVIEWER_REFERENCES]
+    historical = references.get("historical")
     return {
         "method": name,
         "family": family,
@@ -50,10 +51,10 @@ def evaluate(name, family, decisions, references, remote, setting=np.nan):
         "g_merit": signed_eo_gap(decisions, references["merit"], remote),
         "eo_gap_corrected": eo_gap(decisions, references["corrected"], remote),
         "eo_gap_merit": eo_gap(decisions, references["merit"], remote),
-        "eo_gap_historical": eo_gap(decisions, references["historical"], remote),
+        "eo_gap_historical": np.nan if historical is None else eo_gap(decisions, historical, remote),
         "agree_corrected": (decisions == references["corrected"]).mean(),
         "agree_merit": (decisions == references["merit"]).mean(),
-        "acc_historical": (decisions == references["historical"]).mean(),
+        "acc_historical": np.nan if historical is None else (decisions == historical).mean(),
     }
 
 

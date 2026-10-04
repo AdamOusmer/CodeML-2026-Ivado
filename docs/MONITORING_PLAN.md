@@ -103,22 +103,22 @@ verdict final ALERT, garde du consensus ALERT, garde forte ALERT ou problème de
 
 ## 3. Valeurs sur le lot évalué (`decision_record.json`, 4 000 candidats, statut `published`)
 
-Taux d'octroi 0,3995 (1 598), centre 40,2 % / éloigné 39,6 %, décalage 0, jury en mode audit : 200 examinés, 14 échanges
-contestés, 0 appliqué.
+Taux d'octroi 0,3995 (1 598), centre 40,1 % / éloigné 39,7 %, décalage 0, jury en mode audit : 200 examinés, 26 échanges
+contestés, 0 appliqué ; raisonnement : 6 déplacements proposés, 0 appliqué.
 
 | Contrôle | Valeur | Statut |
 |---|---|---|
-| Parité centre / éloigné | 0,0056 | OK |
-| Ratio d'impact régions (plus basse / plus haute) | 0,916 | OK |
-| EO signé vs mérite | −0,065 | OK (marge de 0,025 avant le dépassement de 0,09) |
-| EO vs comité corrigé | 0,046 | WARN (attendu : conserve la récompense du revenu) |
-| Écart intersectionnel (couche 1) | 0,021 | OK |
+| Parité centre / éloigné | 0,0045 | OK |
+| Ratio d'impact régions (plus basse / plus haute) | 0,924 | OK |
+| EO signé vs mérite | −0,060 | OK (marge de 0,030 avant le dépassement de 0,09) |
+| EO vs comité corrigé | 0,053 | WARN (attendu : conserve la récompense du revenu) |
+| Écart intersectionnel (couche 1) | 0,018 | OK |
 | ΔAUC proxys / PSI numérique max / PSI catégoriel max | +0,008 / 0,012 / 0,038 | OK |
 | Jury : effet d'équité / volume d'échanges appliqués | 0,0 / 0,0 | OK |
-| Jury : part de cas examinés où les jurés se divisent | 0,78 | WARN |
-| Consensus : EO vs règle consensus / accord moyen / accord minimum | 0,001 / 0,980 / 0,946 | OK |
-| Consensus : intersectionnel / ratio d'impact éloigné-centre | 0,050 / 0,986 | OK |
-| Forte : écart de sous-groupe / écart de mérite sur cinq régions / pire écart à une référence / coût du revenu | 0,039 / 0,079 / 0,005 / 3,6 % | OK |
+| Jury : part de cas examinés où les jurés se divisent | 0,74 | WARN |
+| Consensus : EO vs règle consensus / accord moyen / accord minimum | 0,002 / 0,976 / 0,944 | OK |
+| Consensus : intersectionnel / ratio d'impact éloigné-centre | 0,050 / 0,989 | OK |
+| Forte : ratio d'impact régional / écart de sous-groupe / écart de mérite sur cinq régions / pire écart à une référence / coût du revenu | 0,924 / 0,030 / 0,082 / 0,011 / 3,6 % | OK |
 
 ## 4. Surveillance en production : cadence et propriétaires
 
@@ -127,9 +127,9 @@ contestés, 0 appliqué.
 | Chaque lot | validation des trames, `decide` (quatre couches), vérification SHA-256 de l'artefact résidu contre le manifeste et les données, archivage de `decision_record.json` (hachages SHA-256 des entrées et du résidu) | responsable modèle | `decision_record.json`, journal `logs/` |
 | Chaque lot | **dérive** : PSI numérique et catégoriel, ΔAUC des proxys ; ALERT = BLOCK ; WARN consigné | responsable données | rapport de dérive |
 | Chaque BLOCK | diagnostic humain avant remise en service ; aucun repli automatique hors `REVERT_JURY` | responsable modèle, protection des RP consultée | note de diagnostic au dossier |
-| **Chaque cycle** (trimestriel) | **ré-estimation du diagnostic du comité** sur l'historique à jour : pénalité (−1,90 logit, IC 95 % [−2,07 ; −1,73]), test des pentes, part du revenu (29 %) ; **ré-entraînement du résidu TabM** (`kaggle/train.py`) et contrôle de son manifeste (perte logarithmique hors échantillon, grille de monotonie, hachages) ; `tune`, `pareto` ; revue des WARN récurrents | responsable modèle ; comité d'éthique approuve | `resultats_tuner.csv`, `resultats_pareto.csv` |
+| **Chaque cycle** (trimestriel) | **ré-estimation du diagnostic du comité** sur l'historique à jour : pénalité (−1,90 logit, IC 95 % [−2,07 ; −1,73]), test des pentes, part du revenu (29 %) ; **ré-entraînement du résidu TabM** (`kaggle/train.py`) et contrôle de son manifeste (perte logarithmique hors échantillon, grille de monotonie, hachages) ; `tune`, `pareto`, front de Pareto de la chaîne déclarée (`model_corrige.py`) ; revue des WARN récurrents | responsable modèle ; comité d'éthique approuve | `resultats_tuner.csv`, `resultats_pareto.csv`, `resultats_pareto_declare.csv` |
 | Trimestriel | `monitor --reviewed` sur un échantillon revu à l'aveugle (EO vs échantillon humain) | audit interne | rapport |
-| **Annuel** | **revue des signes de légitimité par un comité humain** (R +, heures +, première génération 0) : confirmer ou modifier ; l'amplitude des heures est ré-dérivée des données ; examen du poids déclaré du revenu (+0,025) et du mélange du résidu (1) dans la plage de désaccord des examinateurs (besoin −0,05, processus de données +0,19) | comité d'éthique ; direction approuve | procès-verbal, `docs/reviews/CONSENSUS.md` mis à jour |
+| **Annuel** | **revue des signes de légitimité par un comité humain** (R +, heures +, première génération 0) : confirmer ou modifier ; l'amplitude des heures est ré-dérivée des données ; examen du poids déclaré du revenu (+0,025) et du mélange du résidu (2,5) dans la plage de désaccord des examinateurs (besoin −0,05, processus de données +0,19) | comité d'éthique ; direction approuve | procès-verbal, `docs/reviews/CONSENSUS.md` mis à jour |
 | Annuel | audit externe : reproduction d'un lot (déterminisme, I4), invariants, liste `REMOTE_REGIONS`, seuils de `thresholds.py` | audit interne | rapport d'audit |
 
 Toute modification de code, de seuil, de signe ou d'historique relance `scripts/acceptance.py` (79/79 au dernier passage)
@@ -168,8 +168,8 @@ Fondement juridique de l'équité (à vérifier avant citation) : Charte des dro
 | La référence cachée est inconnue ; les « méritants » sont les règles des cinq examinateurs, donc l'équité mesurée est relative à nos hypothèses | échantillon revu à l'aveugle ; audit externe annuel ; revue annuelle des signes |
 | Désaccord sur le revenu (besoin −0,05 ; processus de données +0,19) ; le poids déclaré +0,025 et le mélange du résidu sont des choix de modélisation | comité humain, section 4 |
 | Résidu TabM (ensemble de 4 réseaux, mélange 2,5) : gain de perte logarithmique minime, étiquette historique = décisions du comité, monotonie vérifiée sur grille seulement | blocage si le hachage ne correspond pas ; ré-entraînement et revue du manifeste à chaque cycle |
-| Marge de l'EO signé (−0,065 contre −0,09) | suivi de tendance par lot ; WARN avant ALERT |
-| Part de division des jurés élevée (0,78) : les cinq règles divergent sur les cas limites ; le jury est en mode audit (aucun échange appliqué) | acceptable : aucun risque d'aggravation ; les échanges contestés restent consignés |
+| Marge de l'EO signé (−0,060 contre −0,09) | suivi de tendance par lot ; WARN avant ALERT |
+| Part de division des jurés élevée (0,74) : les cinq règles divergent sur les cas limites ; le jury est en mode audit (aucun échange appliqué) | acceptable : aucun risque d'aggravation ; les échanges contestés restent consignés |
 | Portée du décalage faible (\|δ\| ≤ 0,10) : une grande dérive d'équité n'est pas corrigible | BLOCK volontaire |
 | Bornes de l'offset tenue par la grille seulement, pas dans `FairPipeline` | divergence documentée, contrôle d'acceptation |
 | Région = 5 régions fixes, « éloigné » = 3 régions | revue annuelle de `REMOTE_REGIONS` |

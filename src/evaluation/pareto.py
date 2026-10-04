@@ -15,6 +15,7 @@ FAMILY_LABELS = {
     "baseline": "référence de production", "ablation": "retrait des proxys", "post-processing": "post-traitement",
     "ExpGrad sweep": "ExpGrad (balayage)", "penalty removal sweep": "retrait de la pénalité (balayage)",
     "jury band sweep": "jury, largeur de bande (balayage)", "full pipeline": "pipelines complets",
+    "declared base removal sweep": "base déclarée, part de la pénalité retirée (balayage)",
 }
 CURVE_STYLES = ["o-", "s--", "d-.", "v:"]
 POINT_STYLES = {"baseline": "kX", "ablation": "m^", "post-processing": "cD", "full pipeline": "r*"}
@@ -44,7 +45,7 @@ def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], splits: int, decl
             ax.errorbar(part[x], part[y], xerr=part[f"{x}_std"], fmt=style, markersize=11, capsize=2, label=FAMILY_LABELS.get(family, family))
         marked = summary[summary.method == declared]
         ax.scatter(marked[x], marked[y], s=420, facecolors="none", edgecolors="red", linewidths=2.5, zorder=5,
-                   label="point déclaré")
+                   label="point déclaré (base de consensus, sans résidu)")
         for method, text in (annotated or {}).items():
             row = summary[summary.method == method]
             for xv, yv in zip(row[x], row[y]):
@@ -55,7 +56,7 @@ def plot(summary: pd.DataFrame, panels: list[tuple[str, str]], splits: int, decl
         ax.set_xlabel(LABELS.get(x, x))
         ax.set_ylabel(LABELS.get(y, y))
         ax.grid(alpha=0.3)
-    axes[0][0].legend(loc="upper right", fontsize=8)
+    axes[0][0].legend(loc="lower left", fontsize=8)
     fig.suptitle(f"Équité et utilité : moyenne ± écart-type sur {splits} partitions, même budget pour toutes les méthodes sauf l'ancre")
     fig.tight_layout()
     return fig

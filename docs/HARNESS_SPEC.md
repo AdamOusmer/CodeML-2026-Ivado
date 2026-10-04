@@ -167,7 +167,7 @@ contributions de la base (cote R, heures, revenu) et le terme `residual_rsd`, en
 
 `DecisionRecord` : configuration (dont `residual_blend`), part, statut, décisions, scores, décalage, verdicts, actions,
 `output_issues`, identifiants déplacés, explications, taux par région, `input_hashes` (SHA-256 des deux CSV et de
-`tabm_residual/residuals.csv`), `jury`, `strong_guard`, `deliberation`, `label_correction`, `training_labels`.
+`tabm_residual_ensemble_rh/residuals.csv`), `jury`, `strong_guard`, `deliberation`, `label_correction`, `training_labels`.
 
 ## 11. Points d'entrée et codes de sortie
 

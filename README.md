@@ -17,31 +17,41 @@ La décision est le top k (k = taux historique de 39,94 %, lu dans les données)
 - un harnais automatisé audite le résultat (surveillance, garde du jury, garde du consensus, garde forte), applique au
   plus un décalage borné (|δ| ≤ 0,10) ou bloque la publication.
 
-### Résultats (4 000 candidats)
+### Résultats (4 000 candidats, `decision_record.json`)
 
-| Mesure | Production (RF) | Déclaré |
+| Mesure | Comité / production | Déclaré |
 |---|---|---|
-| Taux d'octroi centres / régions éloignées | 48,4 % / 27,3 % (historique) | 40,2 % / 39,6 % |
-| Écart EO signé vs mérite | 0,247 | −0,065 (OK) |
-| Ratio d'impact (plus basse / plus haute région) | — | 0,916 |
-| Octrois | — | 1 598 (décalage 0) |
-| Jury (mode audit) | — | 200 examinés, 14 échanges contestés, 0 appliqué |
-| Garde forte | — | OK |
-| Contrôles d'acceptation | — | 79/79 |
+| Taux d'octroi centres / régions éloignées | 48,4 % / 27,3 % (historique) | 40,1 % / 39,7 % |
+| Écart EO moyen vs les cinq références des examinateurs | 0,267 (forêt de production au budget) | 0,019 |
+| Écart EO signé vs mérite (centre − éloigné ; plage admise −0,09 à +0,05) | 0,202 | −0,060 (OK) |
+| Écart de parité / ratio d'impact (plus basse / plus haute région) | 0,192 / — | 0,005 / 0,924 |
+| Octrois | — | 1 598 (39,95 %, décalage 0) |
+| Jury et raisonnement (mode audit) | — | 200 examinés, 26 échanges contestés, 6 déplacements proposés, 0 appliqué |
+| Garde du consensus / garde forte | — | OK / OK |
+| Contrôles d'acceptation (`scripts/acceptance.py`) | — | 79/79 |
 
-Alertes résiduelles (WARN) : écart EO vs comité corrigé 0,046, attendu car cette référence garde la récompense du
-revenu ; accord des jurés 0,78.
+Alertes résiduelles (WARN) : écart EO vs comité corrigé 0,053, attendu car cette référence garde la récompense du
+revenu que quatre examinateurs sur cinq rejettent ; part des cas examinés où les jurés se divisent 0,74.
 
-Les références « mérite », « comité corrigé » et « consensus » sont nos propres références approximatives, pas le
-standard caché des juges. Voir `docs/FINDINGS.md` pour le diagnostic, les limites et les pistes rejetées.
+**Front de Pareto** (`model_corrige.py` → `pareto_front.png`, `resultats_pareto_declare.csv`) : la contrainte d'équité
+balayée est la part de la pénalité régionale du comité retirée du score déclaré (0 à 100 %, 11 réglages), avec le
+mélange du résidu (0 à 5) et le poids du revenu (−0,05 à +0,19) ; le point déclaré est marqué et vérifié identique à
+`predictions.csv`. Comparaison avec ExpGrad, ThresholdOptimizer et le retrait des proxys sur 10 partitions de
+l'historique : `pareto_comparaison.png`, `resultats_pareto.csv`.
+
+Les références « mérite », « comité corrigé », « consensus » et les cinq règles des examinateurs sont nos propres
+références approximatives, pas l'étalon caché des juges. Voir `docs/FINDINGS.md` pour le diagnostic, les limites et
+les pistes rejetées.
 
 ### Livrables
 
-- `predictions.csv`
-- `audit_rapport.ipynb` (généré par `scripts/build_audit_report.py`)
-- `model_corrige.py` + `pareto_front.png`
-- `docs/MONITORING_PLAN.md`
-- `models/tabm_residual_ensemble_rh/`, `models/tabm_residual/` et `kaggle/` (entraînement du résidu)
+- `predictions.csv` (4 000 lignes, 1 598 octrois)
+- `audit_rapport.ipynb` : diagnostic, métriques d'équité et justification, proxys, front de Pareto (généré et exécuté par
+  `scripts/build_audit_report.py`)
+- `model_corrige.py` : solution d'atténuation ; écrit `predictions.csv`, `pareto_front.png`, `pareto_comparaison.png`
+- `presentation.pdf` : support du pitch de cinq minutes
+- `docs/MONITORING_PLAN.md` : plan de surveillance en production
+- `models/tabm_residual_ensemble_rh/` et `kaggle/` (entraînement du résidu)
 
 ### Démarrage rapide
 
@@ -226,7 +236,9 @@ pip install -r requirements.txt
 
 `data/` is not versioned: copy the two supplied CSVs into `data/` before running.
 
-`model_corrige.py` writes `predictions.csv`, `resultats_pareto.csv` and `pareto_front.png`.
+`model_corrige.py` writes `predictions.csv`, `pareto_front.png` and `resultats_pareto_declare.csv` (sweep of the
+declared pipeline's fairness constraint on the candidates), and `pareto_comparaison.png` and `resultats_pareto.csv`
+(comparison on 10 history splits).
 `decide` runs the declared consensus panel pipeline and writes the published decisions to `--out-dir`.
 `monitor` runs the monitoring checks against the final decisions.
-`scripts/acceptance.py` runs the 78 acceptance checks.
+`scripts/acceptance.py` runs the 79 acceptance checks.

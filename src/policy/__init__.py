@@ -19,7 +19,7 @@ _EXPORTS = {
                          "correction_report", "report_warnings", "NO_PENALTY_WARNING"),
     "models": ("Config", "DECLARED_CONFIG", "DECLARED_RESIDUAL_BLEND", "SINGLE_RESIDUAL_BLEND", "SINGLE_RESIDUAL_CONFIG", "VALIDATOR_JURY_CONFIG",
                "INCOME_BLIND_CONFIG", "INCOME_BLIND_NO_JURY_CONFIG", "MODEL_JURY", "MODEL_JURY_CONFIG",
-               "CONSENSUS_PANEL_CONFIG", "AUDIT_PANEL_CONFIG", "CONFIGS", "OFFSET_BOUND", "FairPipeline",
+               "CONSENSUS_PANEL_CONFIG", "AUDIT_PANEL_CONFIG", "ACTIVE_BOTH_CONFIG", "ACTIVE_JURY_CONFIG", "ACTIVE_REASONING_CONFIG", "CONFIGS", "OFFSET_BOUND", "FairPipeline",
                "reference_labels"),
 }
 _MODULE_OF = {name: module for module, names in _EXPORTS.items() for name in names}

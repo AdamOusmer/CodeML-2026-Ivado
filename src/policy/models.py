@@ -61,10 +61,17 @@ SINGLE_RESIDUAL_CONFIG = replace(AUDIT_PANEL_CONFIG, name="declared: base + TabM
                                  residual_blend=SINGLE_RESIDUAL_BLEND)
 DECLARED_CONFIG = replace(AUDIT_PANEL_CONFIG, name="declared: base + TabM ensemble residual",
                           residual_blend=DECLARED_RESIDUAL_BLEND, residual_artefact=ENSEMBLE_RESIDUAL_ARTEFACT)
+ACTIVE_JURY = replace(DECLARED_CONFIG.jury, audit_only=False)
+ACTIVE_REASONING = replace(DECLARED_CONFIG.reasoning, apply_moves=True)
+ACTIVE_BOTH_CONFIG = replace(DECLARED_CONFIG, name="ensemble, jury active + reasoning active",
+                             jury=ACTIVE_JURY, reasoning=ACTIVE_REASONING)
+ACTIVE_JURY_CONFIG = replace(DECLARED_CONFIG, name="ensemble, jury active", jury=ACTIVE_JURY)
+ACTIVE_REASONING_CONFIG = replace(DECLARED_CONFIG, name="ensemble, reasoning active", reasoning=ACTIVE_REASONING)
 CONFIGS = {config.name: config for config in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG, INCOME_BLIND_NO_JURY_CONFIG,
                                                MODEL_JURY_CONFIG,
                                                CONSENSUS_PANEL_CONFIG, AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG,
-                                               DECLARED_CONFIG)}
+                                               DECLARED_CONFIG, ACTIVE_BOTH_CONFIG, ACTIVE_JURY_CONFIG,
+                                               ACTIVE_REASONING_CONFIG)}
 
 OFFSET_BOUND = 0.10
 

@@ -1204,7 +1204,7 @@ def check_config_option(ctx) -> str:
     from src.harness import decide
     from src.policy import (AUDIT_PANEL_CONFIG, CONFIGS, CONSENSUS_PANEL_CONFIG, DECLARED_CONFIG, INCOME_BLIND_CONFIG,
                             INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, SCORING_FEATURES,
-                            SINGLE_RESIDUAL_CONFIG, VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
+                            ACTIVE_BOTH_CONFIG, ACTIVE_JURY_CONFIG, ACTIVE_REASONING_CONFIG, SINGLE_RESIDUAL_CONFIG, VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
 
     history, batch = ctx["history"], ctx["batch"]
     assert DECLARED_CONFIG.residual_blend is not None and DECLARED_CONFIG.features == SCORING_FEATURES, "declared config"
@@ -1212,7 +1212,8 @@ def check_config_option(ctx) -> str:
     assert INCOME_BLIND_CONFIG.features == ["cote_r", "heures_travail"], f"features {INCOME_BLIND_CONFIG.features}"
     assert {c.name: c for c in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG,
                               INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, CONSENSUS_PANEL_CONFIG,
-                              AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG, DECLARED_CONFIG)} == CONFIGS, "CONFIGS registry"
+                              AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG, DECLARED_CONFIG, ACTIVE_BOTH_CONFIG,
+                              ACTIVE_JURY_CONFIG, ACTIVE_REASONING_CONFIG)} == CONFIGS, "CONFIGS registry"
     declared = ctx["baseline"]
     share = budget_share(history)
     for config in (INCOME_BLIND_CONFIG,):

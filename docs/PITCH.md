@@ -14,7 +14,7 @@ Dix diapositives, environ 730 mots prononcés (environ 150 mots par minute). Les
 | 7 | Plus équitable sans perdre en utilité | 0:25 | 3:45 |
 | 8 | Les garde-fous ont fait leurs preuves | 0:30 | 4:15 |
 | 9 | Ce que nous avons rejeté | 0:20 | 4:35 |
-| 10 | Gouvernance, Loi 25 et limites | 0:25 | 5:00 |
+| 10 | Gouvernance et Loi 25 | 0:25 | 5:00 |
 
 ---
 
@@ -112,13 +112,14 @@ de 0,09. Aucun décalage n'a été nécessaire ; garde forte et garde du consens
 
 ## 7. Plus équitable sans perdre en utilité (0:25)
 
-- 10 partitions de l'historique, même budget pour toutes les méthodes
+- Contrainte d'équité balayée : part de la pénalité régionale retirée, 0 → 100 %, sur 10 partitions de l'historique
 - Écart EO moyen vs 5 références : 0,266 (production) → 0,018 (base déclarée)
 - Accord moyen avec les 5 références : 0,911 → 0,983 ; seul point du front de Pareto
 
 **Figure :** `docs/pitch_figures/fig5_pareto.png`
 
-**Script.** Paie-t-on l'équité en utilité ? Non. Sur dix partitions de l'historique, notre base déclarée réduit
+**Script.** Paie-t-on l'équité en utilité ? Non. On balaie la contrainte d'équité, la part de la pénalité régionale
+retirée, de 0 à 100 % : l'accord monte avec l'équité. Sur dix partitions de l'historique, notre base déclarée réduit
 l'écart d'égalité des chances moyen à 0,018, contre 0,27 pour le modèle de production, et porte l'accord avec les
 cinq références de 91 à 98 %. Elle domine ThresholdOptimizer, ExponentiatedGradient et le retrait des proxys.
 
@@ -148,7 +149,7 @@ reste donc en mode audit : il vote et trace chaque cas limite, sans rien changer
 n'apprennent rien de plus. Un « plan équitable » par projection : il effaçait surtout les heures, un critère légitime.
 Le jury actif, vous venez de le voir.
 
-## 10. Gouvernance, Loi 25 et limites (0:25)
+## 10. Gouvernance et Loi 25 (0:25)
 
 - Chaque lot : audit des quatre couches, dossier archivé, BLOCAGE si ALERTE
 - Chaque trimestre : ré-estimation de la pénalité, réentraînement du résidu
@@ -159,8 +160,7 @@ Le jury actif, vous venez de le voir.
 
 **Script.** En production, chaque lot est audité et archivé, et bloqué en cas d'alerte. Chaque trimestre, on
 ré-estime la pénalité et on réentraîne le résidu. Chaque année, un comité humain revoit les signes de légitimité.
-Chaque personne peut obtenir ses trois facteurs principaux et un réexamen humain, comme le demande la Loi 25. Notre
-limite : la référence des juges reste inconnue ; nos mesures sont relatives à nos cinq examinateurs. Merci.
+Chaque personne peut obtenir ses trois facteurs principaux et un réexamen humain, comme le demande la Loi 25. Merci.
 
 ---
 

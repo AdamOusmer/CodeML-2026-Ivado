@@ -1,146 +1,200 @@
-# Decision harness specification (v2, after review)
+# Spécification du harnais de décision (v6, pipeline « historique seulement »)
 
-Scope: the controller that wraps the fairness pipeline, takes allocation decisions for a batch,
-and refuses to publish unsafe ones.
+Contrat du contrôleur qui enveloppe le pipeline d'équité, décide un lot, l'audite et refuse de publier une décision
+dangereuse. « DOIT » = contrat. « ÉCART : » = le code diffère du contrat ; le code fait foi.
 
-## 1. Goals and non-goals
+## 1. Objectifs et non-objectifs
 
-Goals
-- Budget-valid decisions for a batch under a declared, justified policy configuration.
-- Every published batch satisfies section 2, otherwise publication is blocked.
-- A complete, replayable record of what was decided and why.
-- `model_corrige.py` (deliverable) and the CLI stay thin entry points over shared modules.
+Objectifs
+- Décisions respectant le budget pour un lot, sous une seule configuration déclarée.
+- Ne publier que les lots dont l'audit final n'est pas en ALERTE.
+- Enregistrement rejouable de ce qui a été décidé et pourquoi.
+- `model_corrige.py` et `src/main.py` sont de minces racines de composition au-dessus de modules partagés.
 
-Non-goals
-- The decision path is fully automated: no human gate, no review queue.
-- Knobs (removal, jury weights) are for the team: we run the tuner (6.2), read the table, and set
-  `DECLARED_CONFIG`. The harness never changes them at decision time. Caveat: every proxy reference is
-  itself a candidate, so the tuner objective is partly circular (review finding: maximizing it moved
-  64 decisions toward the audited committee); read every per-reference column, not only the worst case.
-- No automatic policy change at decision time beyond the bounded `ADJUST_OFFSET`.
-- No online learning, no training on the harness's own decisions.
+Non-objectifs : aucune validation humaine dans le chemin de décision ; aucun changement de politique automatique au
+moment de la décision, sauf le décalage borné `ADJUST_OFFSET` ; aucun apprentissage en ligne (I7) ; aucun réglage en
+direct (I8).
 
-## 2. Invariants
+## 2. Provenance : tout vient de l'historique
 
-| Id | Invariant | Enforced by |
+Aucune valeur de la chaîne ne provient d'un score externe ni d'une expérience qui en dépend. Les entrées sont les deux CSV fournis. Les constantes déclarées sont de deux sortes :
+
+- **dérivées des données à chaque exécution** : le rapport heures / cote R (≈ 0,1835), la pénalité régionale, la part
+  d'octrois ;
+- **choix de modélisation déclarés, retenus par essais, dans la plage de désaccord des examinateurs** (0 à +0,19 pour le
+  revenu) : le poids du revenu (`DECLARED_INCOME_WEIGHT` = +0,025, en unités de cote R) et le mélange du résidu
+  (`DECLARED_RESIDUAL_BLEND` = 1). Ces deux constantes sont dans `src/policy`, en un seul endroit chacune.
+
+Les poids du revenu des cinq examinateurs (`REVIEWER_INCOME_WEIGHTS` : mérite 0, besoin −0,05, juridique 0, processus de
+données +0,19, régional 0) sont lus dans `docs/reviews/consensus.json` ; un contrôle d'acceptation les compare au fichier.
+
+## 3. Pipeline (l'ordre est normatif)
+
+1. **Prétraitement** : `validate_frames` ; le score ne lit que `cote_r`, `log_revenu`, `heures_travail`. La région reste
+   pour l'audit, jamais pour le score.
+2. **Comité (diagnostic)** : `CommitteeModel` ajusté sur l'historique (8 critères + indicateur « éloigné »). Il donne la
+   pénalité, son IC et le rapport heures / cote R. `Config.target = "consensus"` : les étiquettes d'entraînement sont les
+   `k` meilleurs de la règle de consensus sur l'historique (`k = round(part × n)`).
+3. **Base** : score de consensus en unités de cote R, `z(R) + (heures/R dérivé) × z(heures) + 0,025 × z(log revenu)`,
+   normalisé par la moyenne et l'écart-type de l'historique. Une régression logistique à une variable, ajustée sur ce
+   score et les étiquettes de consensus, ne sert qu'à exprimer le score en probabilité (déclencheur `low_confidence`,
+   jurés, explications).
+4. **Résidu TabM** (`Config.residual_blend`, déclaré à 1) : artefact `models/tabm_residual/` (`residuals.csv` :
+   `id_candidat, residual_rsd` ; `manifest.json`), appris sur l'historique seulement (`kaggle/train.py`). Score final =
+   base + mélange × résidu, en unités de cote R. L'artefact est lu par `src/adapters` ; le SHA-256 de `residuals.csv`
+   est comparé au manifeste, et les SHA-256 des deux CSV décidés aux `input_hashes` du manifeste ; toute divergence, un
+   identifiant manquant ou une valeur non finie lève `InputError` (sortie 1, aucun fichier). Sans artefact, la
+   configuration déclarée échoue clairement ; les autres configurations tournent.
+5. **Proposition** : les `k = round(part × n)` meilleurs candidats (tri stable).
+6. **Jury en mode audit** (`JurySettings.audit_only`) : le panel des cinq règles de référence vote sur les cas
+   déclenchés (`near_cutoff`, `low_confidence`, `disagreement`) ; votes, déclencheurs et échanges contestés sont
+   enregistrés, **aucun échange n'est appliqué**.
+7. **Raisonnement en mode audit** (`ReasoningSettings`, `apply_moves=False`) : pour chaque candidat examiné, une trace
+   variable par variable (cote R, heures, règle de consensus) est écrite dans `explanations.csv` ; les contradictions
+   sont comptées dans `deliberation`, aucune décision ne bouge.
+8. **Garde-fous** puis publication ou BLOCAGE (section 6).
+
+Règle du budget : `part = moyenne(decision_octroi)` lue dans les données (39,94 %), dans `BUDGET_BOUNDS = (0,36 ; 0,44)`
+sinon `InputError`. `decide` lève aussi `InputError` pour un `id_candidat` manquant ou dupliqué.
+
+## 4. Découpage en modules
+
+| Chemin | Rôle |
+|---|---|
+| `src/policy/regions.py`, `schema.py`, `core.py` | régions, critères, allocation, `budget_share`, `eo_gap` |
+| `src/policy/references.py` | poids déclarés du revenu, règles des examinateurs, étiquettes de consensus, poids dérivés |
+| `src/policy/label_correction.py` | `CommitteeModel`, correction des étiquettes, rapport de pénalité |
+| `src/policy/jury.py`, `jurors.py`, `reasoning.py` | jury (avec `audit_only`), jurés modèles, raisonnement |
+| `src/policy/models.py` | `Config`, `DECLARED_CONFIG`, `FairPipeline`, `reference_labels` |
+| `src/policy/thresholds.py` | bandes et limites des examinateurs (`docs/reviews/CONSENSUS.md`) |
+| `src/monitoring/checks.py` | contrôles de surveillance (EO signé, dérive) |
+| `src/harness/` | `controller.decide`, `postprocessing`, `consensus` (garde du consensus), `jury_guard`, `strong_guard`, `reasoning_gate`, `output_guard`, `record` |
+| `src/evaluation/` | candidats du front de Pareto, tuner hors ligne |
+| `src/adapters/files.py` | toute l'E/S : lecture des CSV, de l'artefact résidu (`read_residual`), écriture du dossier |
+| `src/pipelines/decision.py` | composition : lecture, validation, résidu, décision, écriture ; branche Pareto concurrente |
+| `kaggle/` | entraînement du résidu TabM (`train.py`), générateur de carnet Kaggle |
+| `scripts/acceptance.py`, `scripts/build_audit_report.py` | contrôles d'acceptation, génération de `audit_rapport.ipynb` |
+
+`src/policy/__init__.py` n'importe pas sklearn à l'import : il exporte par `__getattr__` (PEP 562).
+
+## 5. Frontières
+
+Chaque paquet expose son API dans `__init__.py` ; on importe `from src.<paquet> import nom`, jamais
+`src.<paquet>.<module>` hors du paquet. Sens des dépendances :
+
+```
+main.py, model_corrige.py -> pipelines, adapters, harness, evaluation, monitoring, preprocessing, policy, common
+pipelines -> adapters, harness, evaluation, preprocessing, policy, common
+adapters  -> harness (types), common
+harness   -> monitoring, explain, policy, common
+monitoring, evaluation, explain, preprocessing -> policy (preprocessing aussi common)
+policy    -> numpy, pandas, scipy, scikit-learn seulement
+```
+
+Les E/S de fichiers ne sont permises que dans `src/adapters/`, `src/main.py`, `src/common/logging` et
+`src/preprocessing/validation.py`. Appliqué par `scripts/acceptance.py` (analyse AST, prouvée par injection).
+
+## 6. Garde-fous et actions
+
+Quatre couches de garde (détail dans `MONITORING_PLAN.md`) : contrôles de surveillance (EO signé vs mérite, dérive),
+garde du jury, garde du consensus, **garde forte** (consensus tout OK ; ratio d'impact régional ≥ max(0,90 ; règle de
+consensus déclarée − 0,01) ; écart de sous-groupe, écart de mérite sur cinq régions et écart à chaque référence au plus
+égaux à ceux de la règle de consensus déclarée + 0,01 ; coût du revenu ≤ 5 % de la pénalité retirée). La règle de
+consensus de comparaison est la règle **déclarée** (revenu +0,025), recalculée sur l'historique à chaque exécution.
+
+| Action | Paramètres | Quand |
 |---|---|---|
-| I1 | Grants = round(share x n), share = historical grant rate, 0.36 <= share <= 0.44 | `policy.budget_share`, `policy.allocate`, Auditor |
-| I2 | Default scoring never reads `region_administrative`, `code_postal_3` or `distance_domicile_campus_km` | `policy.legitimate_features`, `FairPipeline.score` returns the jury score when offset = 0 |
-| I3 | Region enters a decision only through `ADJUST_OFFSET`, abs(offset) <= 0.10, recorded and disclosed; training labels have the full penalty removed (removal = 1.0) | Corrector, `Config`, DecisionRecord |
-| I4 | Same inputs => identical decisions and record (excluding timestamps) | fixed seeds, stable sorts |
-| I5 | A blocked run never overwrites a published `predictions.csv` | `DecisionRecord.write` (single writer) |
-| I6 | Every harness action belongs to section 4 and appears in the record | controller loop |
+| `SELECT_CONFIG` | `{config}` | une fois, en premier |
+| `ADJUST_OFFSET` | `{offset, moved, offset_moved, alerts}` | ALERTE corrigible de la surveillance ou du consensus, `fit_offset` ≠ 0 |
+| `REVERT_JURY` | `{checks, offset}` | ALERTE de la garde du jury : jury retiré, décalage recalculé |
+| `BLOCK` | `{checks, suggestion}` | verdict final, garde du consensus ou garde forte en ALERTE, ou problème de sortie |
 
-## 3. Roles
+```
+AJUSTER -> DÉCIDER(décalage 0) -> AUDIT --OK/WARN--> PUBLIER
+                                 '--ALERTE corrigible--> ADJUST_OFFSET -> AUDIT --OK/WARN--> PUBLIER
+                                 '--autre ALERTE-------> BLOCK             '--ALERTE--> BLOCK
+```
 
-| Role | Input | Output | May change |
-|---|---|---|---|
-| Gatekeeper | history CSV, batch CSV | validated frames or error | nothing |
-| Decider | history, batch, declared `Config` | scores, decisions | nothing |
-| Auditor | history, batch, decisions | `Verdict` | nothing |
-| Corrector | `Verdict`, batch, jury scores | new decisions + `Action` | bounded offset, or block |
-| Recorder | everything above | `DecisionRecord` | nothing |
+- Au plus un décalage par lot (|δ| ≤ `OFFSET_BOUND` = 0,10, grille de 41 valeurs). Une ALERTE après correction mène à
+  BLOCK (sortie 3), sans politique de repli, hors `REVERT_JURY`.
+- `fit_offset` choisit par la clé `(max(violation, 0), |δ|, −δ)` ; une métrique non calculable est une ALERTE non
+  corrigible.
+- La garde de sortie (`output_guard`) passe en dernier : identifiants, valeurs binaires, exactement `k` octrois.
+- Un lot bloqué n'écrit jamais `predictions.csv` (I5) ; `decision_record.json` et `explanations.csv` sont toujours écrits.
+- En mode audit, `jury_moved_ids` est vide et `jury.applied` vaut `false` ; l'effet d'équité et le volume d'échanges de
+  la garde du jury mesurent les échanges appliqués.
 
-## 4. Actions (closed set)
+## 7. Invariants
 
-| Kind | Params | When |
+| Id | Invariant | Appliqué par |
 |---|---|---|
-| `SELECT_CONFIG` | config, evidence (Pareto summary row) | once, at start |
-| `ADJUST_OFFSET` | offset, gaps before/after, moved ids | ALERT where every alerting check is correctable |
-| `BLOCK` | failing checks, suggested human action | non-correctable ALERT, or ALERT after one correction |
+| I1 | octrois = round(part × n), 0,36 ≤ part ≤ 0,44 | `budget_share`, `allocate`, contrôle de budget |
+| I2 | le score ne lit jamais région, code postal, distance ; le résidu ne prend que R et les heures | `FairPipeline`, entraînement du résidu |
+| I3 | la région n'entre que par `ADJUST_OFFSET` (|δ| ≤ 0,10, enregistré) | `OFFSET_BOUND`, `fit_offset` |
+| I4 | même historique + lot + artefact => mêmes décisions, scores, enregistrement | aucun aléa dans `decide`, tris stables |
+| I5 | un lot bloqué n'écrit pas `predictions.csv` | `write_decision` |
+| I6 | toute action est une `ActionKind` présente dans `record.actions` | `controller.decide` |
+| I7 | les décisions ne servent jamais de données d'entraînement | `FairPipeline.fit(history)` |
+| I8 | le tuner ne modifie jamais la configuration vivante | sortie CSV seulement |
+| I9 | le résidu est vérifié par SHA-256 contre le manifeste et les deux CSV décidés | `read_residual` |
 
-## 5. Flow
+## 8. Contrat de surveillance
 
-```
-VALIDATE -> SELECT_CONFIG -> DECIDE -> AUDIT --OK/WARN--> PUBLISH
-                                         '--ALERT (correctable)--> ADJUST_OFFSET -> AUDIT --OK/WARN--> PUBLISH
-                                         '--ALERT (otherwise)----> BLOCK         '--ALERT--> BLOCK
-```
-Correctable = opportunity-gap checks only (`Check.correctable = True`). Budget, proxy drift and
-feature drift ALERTs block: data shift or a broken budget needs a human. A block reason may suggest
-the merit-only policy for human sign-off; the harness never applies it.
+`run_checks(history, batch, decisions, reviewed=None, eo_gap_alert=EO_GAP_ALERT, *, corrected_enforced=True,
+graph=MONITORING, workers=4) -> list[Check]` ; `Check.excess` est la distance au-delà de la limite d'ALERTE.
+Statut = maximum des contrôles (OK < WARN < ALERT). Le contrôle d'EO vs mérite est signé, g = TPR(centre) − TPR(éloigné),
+en ALERTE hors [−0,09 ; +0,05]. L'écart vs comité corrigé n'est que consultatif quand la cible est « consensus »
+(cette référence conserve la récompense du revenu). Les références viennent de `policy.reference_labels` : `corrected`,
+`merit`, `consensus`, les cinq examinateurs, et `historical` si le lot est étiqueté.
 
-## 6. Components
+## 9. Évaluation (hors ligne)
 
-### 6.1 Policy — domain core, imports only numpy, pandas, scikit-learn
-`src/policy/__init__.py` stays empty (validation subprocesses import `policy.regions` without sklearn).
-- `regions.py`: `REGIONS`, `REMOTE_REGIONS`, `is_remote(df)`; `preprocessing.validation` imports it.
-- `core.py`: `legitimate_features`, `production_features`, `BUDGET_BOUNDS`, `budget_share`, `allocate`,
-  `percentile`, `eo_gap`, `reference_labels(history, target, share) -> {historical?, corrected, merit}`
-  (`historical` only when the target has `decision_octroi`).
-- `models.py`:
-  - `Config(frozen)`: `removal: float = 1.0`, `jury_weights = {"main_model": 0.5, "merit": 0.5}`, `name`.
-  - `CommitteeModel`: unchanged.
-  - `FairPipeline(config, share)`: `fit(history)`, `jury_score(df)`, `score(df, offset=0.0)`,
-    `predict(df, offset=0.0)`, `contributions(df) -> DataFrame` (coef x standardized value per feature).
-  - `DECLARED_CONFIG = Config(name="jury 50/50")`.
+- `pareto` : `default_candidates()` sur K partitions 70/30 stratifiées (10 par défaut) : RF de production, retrait des
+  proxys, ThresholdOptimizer, balayage ExpGrad, balayage de la pénalité du comité, balayage de la bande du jury, jury de
+  validation, sans revenu, et la **base de consensus en mode audit** (sans résidu : le résidu n'existe que pour les
+  candidats).
+- `tune` : parcourt `SEARCH_SPACE` (bandes × quorums × jurés × mélange, plus le panel de consensus et sa variante en
+  mode audit) ; `worst_case = min(score_r)` sur les références ; sortie `resultats_tuner.csv`. Ni `tune` ni `pareto`
+  n'alimente `decide`.
 
-### 6.2 Evaluation — imports policy
-- `core.py`: `Candidate(name, family, decide, setting)`, `evaluate(decisions, references, remote) -> dict`,
-  `scaled_utility`, `run(history, candidates, share, splits, workers)`, `summarize(results)`.
-- `pareto.py`: `pareto_mask`, `plot`.
-- Candidates: baseline anchor (natural threshold), baseline at budget, drop-proxies, ExpGrad sweep,
-  ThresholdOptimizer, removal sweep, merit-weight sweep, and `FairPipeline(DECLARED_CONFIG)` with offset 0.
-- `tuner.py` (offline): `tune(history, share, configs, splits=5, workers=4) -> DataFrame`. Per config, per
-  reference r in {corrected, merit}: equity_r = 1 - gap_r / gap_r(committee at budget), utility_r = scaled
-  agreement, score_r = (20 equity_r + 15 utility_r) / 35; reports every score_r, the worst case, and mean gaps.
-  Search space: merit weight in {0, 0.25, 0.5, 0.75, 1}, removal = 1.0. Output only; never feeds `decide`.
+## 10. Explications et enregistrement
 
-### 6.3 Monitoring — imports policy
-- `checks.py`: existing `run_checks(history, batch, decisions, reviewed=None)`, references from
-  `policy.reference_labels`; `Check.correctable` set for the opportunity-gap checks; `Verdict(status, checks)`.
-- Thresholds unchanged; `EO_GAP_ALERT` injectable for acceptance tests.
+`explain` produit : `id_candidat, decision, proposed_decision, score, final_rank, merit_vote, model_vote, offset,
+validated, trigger_reasons, juror_votes, jury_outcome` (`not_reviewed | confirmed | contested_unpaired | contested_out |
+contested_in` en mode audit), `reasoning_outcome`, `reasoning_trace`, `factor_1..3`. Avec le résidu, les facteurs sont les
+contributions de la base (cote R, heures, revenu) et le terme `residual_rsd`, en unités de cote R.
 
-### 6.4 Explanations — imports policy
-- `explain.py`: `explain(pipeline, df, decisions, scores, offset, top=3)`: id, decision, score, merit_vote,
-  model_vote, applied offset, factor_1..3 from `pipeline.contributions`. Identity with decision_function at 1e-9.
+`DecisionRecord` : configuration (dont `residual_blend`), part, statut, décisions, scores, décalage, verdicts, actions,
+`output_issues`, identifiants déplacés, explications, taux par région, `input_hashes` (SHA-256 des deux CSV et de
+`tabm_residual/residuals.csv`), `jury`, `strong_guard`, `deliberation`, `label_correction`, `training_labels`.
 
-### 6.5 Harness — imports policy, monitoring, decision, preprocessing
-- `record.py`: `ActionKind`, `Action`, `DecisionRecord(config, share, status, decisions, scores, offset,
-  verdicts, actions, moved_ids, explanations, region_rates, input_hashes)`;
-  `write(out_dir)` writes JSON + CSVs and writes `predictions.csv` only when published (I5).
-- `controller.py`: `decide(history, batch, input_hashes, config=DECLARED_CONFIG, workers=4) -> DecisionRecord`.
-  Pure: no file I/O except through `record.write`, no printing, logs via `get_logger("harness")`.
+## 11. Points d'entrée et codes de sortie
 
-### 6.6 Entry points (composition roots)
-- `src/main.py`: `check-data`, `monitor`, `decide --history --batch --out-dir`, `pareto --splits --workers`,
-  `tune --splits --workers` (writes `resultats_tuner.csv`).
-  Exit codes: 0 published / OK, 3 blocked or ALERT (existing `EXIT_ALERT`), 1 error, 2 bad arguments, 130 interrupted.
-- `model_corrige.py`: declares the Pareto candidates, runs evaluation (10 splits), then `harness.decide` and
-  `record.write`. Same artifacts as the CLI.
+- `check-data`, `monitor`, `decide --history --batch --out-dir [--config NOM] [--residual-dir DIR] [--json]`, `pareto`,
+  `tune`.
+- Sortie : 0 OK ou publié ; 3 ALERTE de surveillance ou lot bloqué ; 1 erreur (dont artefact résidu absent ou
+  incohérent) ; 2 arguments invalides ; 130 interruption.
+- `decide(history, batch, input_hashes, config=DECLARED_CONFIG, residual=None, ...)` est pur : aucune E/S.
 
-## 7. Dependency rules
-```
-main.py, model_corrige.py -> harness -> {monitoring, explain, preprocessing} -> policy
-main.py, model_corrige.py -> evaluation -> policy
-common.logging: importable anywhere
-```
-Forbidden: importing `main` or `model_corrige`; `policy` importing project modules; `monitoring`,
-`evaluation`, `explain` importing each other.
+## 12. Contrôles d'acceptation
 
-## 8. Resources and determinism
-At most 4 threads; validation keeps its 2 processes. Splits seeded 0..K-1, RF `random_state=42`,
-stable argsort everywhere.
+`OMP_NUM_THREADS=2 uv run python scripts/acceptance.py` : 79 contrôles, tous PASS. Ils couvrent le budget,
+les doublons, les alertes corrigibles et non corrigibles, la dérive, le rejeu, l'invariance régionale, les frontières de
+paquets, le jury (échanges symétriques, déterminisme), la correction des étiquettes, la garde de sortie, la garde du
+jury, la garde du consensus, la garde forte, le raisonnement, ainsi que les contrôles propres à cette version :
+`residual_artefact` (SHA-256 contre le manifeste et les données ; valeurs, hachage et lot altérés refusés),
+`residual_required` (la configuration déclarée échoue clairement sans artefact, les autres tournent),
+`declared_pipeline` (poids du revenu dans la plage des examinateurs ; décisions = top-k de base + résidu ; mode audit
+sans échange ni déplacement ; résidu aligné par identifiant), `consensus_constants` (poids du revenu des examinateurs égaux
+à `consensus.json`) et `no_derived_constants` (aucune constante ou référence d'origine externe dans `src`, `kaggle`,
+`models`). Les contrôles de mécanique du harnais décident avec « consensus panel » ; ceux du décalage forcé avec
+« income-blind, no jury ».
 
-## 9. Audit trail
-`decision_record.json` (config, actions, verdicts, region rates, input hashes) and `explanations.csv`
-(principal factors per applicant) make every automated decision traceable.
+## 13. Risques ouverts
 
-## 10. Migration (each step keeps predictions.csv valid: 4,000 rows, 36-44 %, candidate order)
-1. `src/policy` from `model_corrige.py`; offset leaves `FairPipeline` (default 0).
-2. `src/evaluation` absorbs `src/experiments/harness.py` and `compare_methods`/`stability`/`plot_pareto`.
-3. Monitoring on `policy.reference_labels`, `Check.correctable`, `Verdict`.
-4. `src/explain.py` from the bake-off (Opus structure), adapted to 6.4.
-5. `src/harness`, CLI `decide`/`pareto`, thin `model_corrige.py`.
-
-## 11. Acceptance checks
-- 1,598 grants for 4,000 candidates (share 39.94 %); default offset 0; no proxy column read (I2).
-- Forced correctable ALERT (remote jury scores shifted by -0.10) -> `ADJUST_OFFSET` recorded with moved ids.
-- Drift ALERT (R scores +3) -> `BLOCK`, exit 3, existing `predictions.csv` unchanged (I5).
-- Replay gives identical `predictions.csv` and record minus timestamps (I4).
-- Import graph obeys section 7.
-
-## 12. Open risks
-- The declared 50/50 jury rests on the red-team simulation, not on the hidden reference.
-- Percentile votes depend on the batch cohort.
-- Batch-level corrections inherit the proxy references' assumptions.
+- La référence cachée est inconnue ; l'équité mesurée est relative aux règles des cinq examinateurs.
+- Le poids du revenu et le mélange du résidu sont des choix de modélisation déclarés : à valider par un comité humain.
+- Le résidu améliore à peine la perte logarithmique historique (voir le manifeste) : l'étiquette historique mesure les
+  décisions du comité, pas le mérite.
+- Les votes en percentile dépendent de la composition du lot.
+- Un nœud corrompu (longueur ou NaN) lève avant la construction du BLOCK : échec fermé (sortie 1), pas un BLOCK enregistré.

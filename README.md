@@ -1,3 +1,86 @@
+# ÉquiAlgo — notre solution
+
+Le biais du modèle de production n'est pas du bruit : c'est une pénalité régionale plate (−1,90 logit, IC95 [−2,07 ;
+−1,73]) appliquée par-dessus le mérite, et le revenu familial agit en plus comme une pénalité régionale cachée (le
+revenu des régions éloignées est plus bas de 0,68 écart-type). Tout ce qui suit est construit à partir de l'historique
+des 10 000 demandes.
+
+La décision est le top k (k = taux historique de 39,94 %, lu dans les données) du score `base + résidu` :
+
+- **base** : règle de consensus des cinq examinateurs, en unités de cote R : cote R, un crédit linéaire pour les heures
+  (rapport heures/R = 0,1835, dérivé de l'historique à chaque exécution) et un petit poids du revenu (+0,025, choix de
+  modélisation déclaré, retenu par essais, dans la plage de désaccord des examinateurs de 0 à +0,19) ;
+- **résidu** : un TabM borné appris sur l'historique (`kaggle/train.py`), livré comme artefact vérifié par SHA-256
+  (`models/tabm_residual/`), mélangé à 1 (choix déclaré) ;
+- **jury et raisonnement en mode audit** : le panel des cinq règles vote et les décisions sont tracées, sans échange ;
+- un harnais automatisé audite le résultat (surveillance, garde du jury, garde du consensus, garde forte), applique au
+  plus un décalage borné (|δ| ≤ 0,10) ou bloque la publication.
+
+### Résultats (4 000 candidats)
+
+| Mesure | Production (RF) | Déclaré |
+|---|---|---|
+| Taux d'octroi centres / régions éloignées | 48,4 % / 27,3 % (historique) | 40,2 % / 39,6 % |
+| Écart EO signé vs mérite | 0,247 | −0,065 (OK) |
+| Ratio d'impact (plus basse / plus haute région) | — | 0,916 |
+| Octrois | — | 1 598 (décalage 0) |
+| Jury (mode audit) | — | 200 examinés, 14 échanges contestés, 0 appliqué |
+| Garde forte | — | OK |
+| Contrôles d'acceptation | — | 79/79 |
+
+Alertes résiduelles (WARN) : écart EO vs comité corrigé 0,046, attendu car cette référence garde la récompense du
+revenu ; accord des jurés 0,78.
+
+Les références « mérite », « comité corrigé » et « consensus » sont nos propres références approximatives, pas le
+standard caché des juges. Voir `docs/FINDINGS.md` pour le diagnostic, les limites et les pistes rejetées.
+
+### Livrables
+
+- `predictions.csv`
+- `audit_rapport.ipynb` (généré par `scripts/build_audit_report.py`)
+- `model_corrige.py` + `pareto_front.png`
+- `docs/MONITORING_PLAN.md`
+- `models/tabm_residual/` et `kaggle/` (entraînement du résidu)
+
+### Démarrage rapide
+
+Avec [uv](https://docs.astral.sh/uv/) :
+
+```bash
+uv sync
+OMP_NUM_THREADS=2 uv run python model_corrige.py
+uv run python -m src.main decide --out-dir out
+uv run python -m src.main monitor
+OMP_NUM_THREADS=2 uv run python scripts/acceptance.py
+```
+
+Avec pip :
+
+```bash
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+```
+
+`data/` doit contenir les deux CSV fournis avant de lancer quoi que ce soit. La configuration déclarée lit
+`models/tabm_residual/` et échoue clairement si l'artefact manque ou ne correspond pas aux données.
+
+Entraînement du résidu (GPU Kaggle gratuit) : `uv run python kaggle/build_notebook.py` génère un carnet qui exécute
+`kaggle/train.py` avec les deux CSV pour seules entrées ; copier `residuals.csv` et `manifest.json` dans
+`models/tabm_residual/`.
+
+### Documentation
+
+- [docs/HARNESS_SPEC.md](docs/HARNESS_SPEC.md)
+- [docs/JURY_SPEC.md](docs/JURY_SPEC.md)
+- [docs/CONSENSUS_TARGET_SPEC.md](docs/CONSENSUS_TARGET_SPEC.md)
+- [docs/reviews/CONSENSUS.md](docs/reviews/CONSENSUS.md)
+- [docs/PREPROCESSING_SPEC.md](docs/PREPROCESSING_SPEC.md)
+- [docs/FINDINGS.md](docs/FINDINGS.md)
+- [docs/MONITORING_PLAN.md](docs/MONITORING_PLAN.md)
+
+---
+
+Original challenge brief:
+
 # ÉquiAlgo: fair student financing
 
 Engineering and Computer Science Hackathon 2026. 24-hour challenge.
@@ -127,8 +210,10 @@ With [uv](https://docs.astral.sh/uv/) (Python version in `.python-version`, lock
 
 ```bash
 uv sync
-uv run python -m src.main check-data
-uv run python model_corrige.py
+OMP_NUM_THREADS=2 uv run python model_corrige.py
+uv run python -m src.main decide --out-dir out
+uv run python -m src.main monitor
+OMP_NUM_THREADS=2 uv run python scripts/acceptance.py
 ```
 
 With pip, as in the original setup:
@@ -136,18 +221,11 @@ With pip, as in the original setup:
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python -m src.main check-data
-python model_corrige.py
 ```
 
 `data/` is not versioned: copy the two supplied CSVs into `data/` before running.
 
 `model_corrige.py` writes `predictions.csv`, `resultats_pareto.csv` and `pareto_front.png`.
-
-`check-data` validates both CSVs in parallel processes: schema, row counts, value
-ranges, programs, regions, postal-code and ID formats, unique IDs, and disjoint
-historical and evaluation IDs. Options: `--json`, `--plain`, `--quiet`, `--verbose`,
-`--no-progress`, `--log-dir DIR`, `--no-log-file`, `--train-file CSV`,
-`--evaluation-file CSV`, `--expected-train-rows N`, `--expected-evaluation-rows N`.
-Exit codes: 0 valid, 1 invalid data, 2 bad arguments, 130 interrupted. Each run
-writes a timestamped DEBUG log to `logs/`.
+`decide` runs the declared consensus panel pipeline and writes the published decisions to `--out-dir`.
+`monitor` runs the monitoring checks against the final decisions.
+`scripts/acceptance.py` runs the 78 acceptance checks.

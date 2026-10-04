@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from src.monitoring import Check, Verdict, graded, verdict
-from src.policy import MODEL_JURORS, TABM_JURORS, auc, eo_gap, is_remote, reference_labels
+from src.policy import MODEL_JURORS, auc, eo_gap, is_remote, reference_labels
 
 JUROR_AUC_WARN, JUROR_AUC_ALERT = 0.90, 0.85
 LEAKAGE_WARN, LEAKAGE_ALERT = 0.03, 0.05
@@ -15,10 +15,6 @@ EFFECT_REFERENCES = ("merit", "corrected", "consensus")
 
 def model_jurors(pipeline):
     return [name for name in pipeline.config.jury.jurors if name in MODEL_JURORS]
-
-
-def leak_checked_jurors(pipeline):
-    return [name for name in pipeline.config.jury.jurors if name in MODEL_JURORS or name in TABM_JURORS]
 
 
 def quality_checks(pipeline):
@@ -38,7 +34,7 @@ def leakage_checks(pipeline, batch):
     main_auc = region_auc(remote, pipeline.model_probability(batch))
     scores = pipeline.juror_scores(batch)
     checks = []
-    for name in leak_checked_jurors(pipeline):
+    for name in model_jurors(pipeline):
         juror_auc = region_auc(remote, scores[name])
         checks.append(graded(f"juror region leakage: {name}", juror_auc - main_auc, LEAKAGE_WARN, LEAKAGE_ALERT,
                              threshold=f"warn > {LEAKAGE_WARN}, alert > {LEAKAGE_ALERT}",
@@ -63,7 +59,7 @@ def swap_volume_check(outcome):
 
 
 def agreement_check(pipeline, outcome):
-    voters = leak_checked_jurors(pipeline) or list(pipeline.config.jury.jurors)
+    voters = model_jurors(pipeline) or list(pipeline.config.jury.jurors)
     triggered = np.asarray(outcome.triggered, dtype=bool)
     if not triggered.any():
         return None
@@ -77,7 +73,7 @@ def jury_guard(pipeline, history, batch, share, outcome) -> Verdict:
     if not pipeline.config.jury.jurors:
         return Verdict("OK", [])
     checks = []
-    if leak_checked_jurors(pipeline):
+    if model_jurors(pipeline):
         checks += [*quality_checks(pipeline), *leakage_checks(pipeline, batch)]
     references = reference_labels(history, batch, share)
     checks += [fairness_effect_check(outcome, references, is_remote(batch)), swap_volume_check(outcome),

@@ -86,6 +86,11 @@ donc la base en mode audit) : écart EO moyen contre les cinq références 0,017
 | « Plan équitable » (`fair_plane`, projection sur le noyau) | retire surtout les heures (u : R −0,144, revenu −0,465, heures +0,874) ; accord avec les étiquettes 0,997 → 0,974 |
 | Harnais par étapes (`stepwise`) et veto à double jury | écartés pour la complexité qu'ils ajoutent ; leur code et leurs contrôles sont retirés de cette version |
 | Ancien jury validateur | 35 échanges : écart EO de 0,002 à 0,016 (désormais bloqué par la garde du consensus) |
+| Jury actif (échanges appliqués) | 26 échanges proposés ; effet sur l'équité +0,018 > 0,01 : `REVERT_JURY` par le harnais |
+| Jurés sensibles au résidu | 16 échanges ; effet sur l'équité +0,019 : annulé |
+| Jury de 8 modèles TabM (quorum 6/8) | 1 échange ; garde forte en ALERT (pire écart de référence 0,0138 > 0,012) : bloqué |
+| Barrière d'équité par paire | 1 échange conservé sur 26 (2 lignes) |
+| Conclusion | le jury et le raisonnement restent en mode audit (votes et traces pour la transparence) ; les décisions viennent du modèle entraîné, sous les garde-fous |
 | Seuil d'heures à 10 h | non identifié (retenu dans 48 % des rééchantillonnages) ; remplacé par un crédit linéaire |
 | Normalisation du revenu par région | supprime le signal régional (AUC 0,693 → 0,502) mais le revenu n'est pas un critère de la référence : retiré de la cible plutôt que normalisé |
 

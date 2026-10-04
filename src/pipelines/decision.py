@@ -12,7 +12,7 @@ from src.policy import DECLARED_CONFIG, correction_report, report_warnings
 from src.preprocessing import validate_frames
 
 PIPELINE_WORKERS = 2
-DEFAULT_RESIDUAL_DIR = Path(__file__).resolve().parents[2] / "models/tabm_residual"
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 logger = get_logger("pipelines")
 
@@ -32,10 +32,14 @@ def log_warnings(report) -> tuple[str, ...]:
     return warnings
 
 
+def residual_dir_of(config, residual_override):
+    return Path(residual_override) if residual_override else MODELS_DIR / config.residual_artefact
+
+
 def hashes_of(inputs, config, residual_dir):
     if config.residual_blend is None:
         return inputs.hashes
-    return {**inputs.hashes, f"tabm_residual/{RESIDUAL_FILE}": sha256(Path(residual_dir) / RESIDUAL_FILE)}
+    return {**inputs.hashes, f"{config.residual_artefact}/{RESIDUAL_FILE}": sha256(Path(residual_dir) / RESIDUAL_FILE)}
 
 
 def load_residual(config, residual_dir, history_path, batch_path, batch):
@@ -69,6 +73,7 @@ DECISION_NODES = (
     Node("batch", batch_of, ("inputs",)),
     Node("frame_report", validate_frames, ("history", "batch")),
     Node("frame_warnings", log_warnings, ("frame_report",)),
+    Node("residual_dir", residual_dir_of, ("config", "residual_override")),
     Node("hashes", hashes_of, ("inputs", "config", "residual_dir"), after=("residual",)),
     Node("residual", load_residual, ("config", "residual_dir", "history_path", "batch_path", "batch")),
     Node("decision", decide, ("history", "batch", "hashes", "config", "residual"), after=("frame_report",)),
@@ -88,16 +93,16 @@ FULL = Graph(DECISION_NODES + PARETO_NODES)
 
 
 def run_decision(history_path: Path, batch_path: Path, out_dir: Path, *, config=DECLARED_CONFIG,
-                 residual_dir: Path = DEFAULT_RESIDUAL_DIR, graph: Graph = DECISION,
+                 residual_dir: Path | None = None, graph: Graph = DECISION,
                  workers: int = PIPELINE_WORKERS) -> dict:
     seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir, "config": config,
-             "residual_dir": residual_dir}
+             "residual_override": residual_dir}
     return graph.run(seeds, workers=workers)
 
 
 def run_full(history_path: Path, batch_path: Path, out_dir: Path, splits: int, pareto_workers: int, *,
-             config=DECLARED_CONFIG, residual_dir: Path = DEFAULT_RESIDUAL_DIR, graph: Graph = FULL,
+             config=DECLARED_CONFIG, residual_dir: Path | None = None, graph: Graph = FULL,
              workers: int = PIPELINE_WORKERS) -> dict:
     seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir, "config": config,
-             "residual_dir": residual_dir, "splits": splits, "pareto_workers": pareto_workers}
+             "residual_override": residual_dir, "splits": splits, "pareto_workers": pareto_workers}
     return graph.run(seeds, workers=workers)

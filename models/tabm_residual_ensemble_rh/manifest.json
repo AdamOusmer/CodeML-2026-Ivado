@@ -1,0 +1,206 @@
+{
+  "status": "complete",
+  "model": "tabm.TabM",
+  "kind": "equal-weight mean of 4 TabM residual configurations (inputs R + hours)",
+  "device": "Tesla T4",
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "folds": 5,
+  "epochs": 300,
+  "penalties_swept": [
+    0.03,
+    0.1,
+    0.3
+  ],
+  "penalty_selection": "per configuration, penalty with the lowest outer-OOF historical log loss (selection optimism)",
+  "residual_units": "full-history standardized R equivalent",
+  "aggregation": "id-aligned arithmetic mean of each configuration's mean_residual",
+  "members": [
+    {
+      "cfg_id": "m16x2x128_cap0.25_Rh",
+      "model_size": "m16x2x128",
+      "members": 16,
+      "blocks": 2,
+      "width": 128,
+      "residual_cap": 0.25,
+      "residual_inputs": "Rh",
+      "selected_penalty": 0.03,
+      "penalties_swept": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "source_file": "audit_arrays/m16x2x128_cap0.25_Rh/pen0.03_candidate_residuals.npz",
+      "source_sha256": "d3ff6ad955ee417940a961029023998cbc060cad639ef0446c5538f07500ccdb",
+      "oof_logloss": 0.2586067622592369,
+      "oof_logloss_improvement": 0.0002538742063602,
+      "oof_logloss_improvement_se": 0.0001715961330746,
+      "oof_auc_improvement": 9.784073379459636e-05,
+      "oof_brier_improvement": 0.0001021247874542,
+      "monotonicity": {
+        "grid_status": "GRIDPASS",
+        "mono_pass": true,
+        "grid_violations": 0,
+        "min_R_derivative": 0.9714047074277636,
+        "min_hours_derivative": 0.160055863690724
+      },
+      "normalized_base_hours_coefficient": 0.1835990583402249,
+      "normalized_base_income_coefficient": 0.194417038012115
+    },
+    {
+      "cfg_id": "m16x2x128_cap0.5_Rh",
+      "model_size": "m16x2x128",
+      "members": 16,
+      "blocks": 2,
+      "width": 128,
+      "residual_cap": 0.5,
+      "residual_inputs": "Rh",
+      "selected_penalty": 0.03,
+      "penalties_swept": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "source_file": "audit_arrays/m16x2x128_cap0.5_Rh/pen0.03_candidate_residuals.npz",
+      "source_sha256": "5b0ca55b206a37a6e19ed23de521ff153d04d3d6000f199af04474f577624219",
+      "oof_logloss": 0.2586663150139226,
+      "oof_logloss_improvement": 0.0001943214516745,
+      "oof_logloss_improvement_se": 0.0001803838464772,
+      "oof_auc_improvement": 8.33751459690113e-05,
+      "oof_brier_improvement": 8.89383023366247e-05,
+      "monotonicity": {
+        "grid_status": "GRIDPASS",
+        "mono_pass": true,
+        "grid_violations": 0,
+        "min_R_derivative": 0.9703208295750664,
+        "min_hours_derivative": 0.157838365660003
+      },
+      "normalized_base_hours_coefficient": 0.1835990583402249,
+      "normalized_base_income_coefficient": 0.194417038012115
+    },
+    {
+      "cfg_id": "m32x3x256_cap0.25_Rh",
+      "model_size": "m32x3x256",
+      "members": 32,
+      "blocks": 3,
+      "width": 256,
+      "residual_cap": 0.25,
+      "residual_inputs": "Rh",
+      "selected_penalty": 0.03,
+      "penalties_swept": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "source_file": "audit_arrays/m32x3x256_cap0.25_Rh/pen0.03_candidate_residuals.npz",
+      "source_sha256": "36746a7932a656d80ca4d5567a4b6840b9b0796e6bfea0993a03a5de773a68bf",
+      "oof_logloss": 0.2585605597257741,
+      "oof_logloss_improvement": 0.000300076739823,
+      "oof_logloss_improvement_se": 0.0002042973603745,
+      "oof_auc_improvement": 0.0001123480091932,
+      "oof_brier_improvement": 0.0001203072196102,
+      "monotonicity": {
+        "grid_status": "GRIDPASS",
+        "mono_pass": true,
+        "grid_violations": 0,
+        "min_R_derivative": 0.953205465893734,
+        "min_hours_derivative": 0.1527799691559605
+      },
+      "normalized_base_hours_coefficient": 0.1835990583402249,
+      "normalized_base_income_coefficient": 0.194417038012115
+    },
+    {
+      "cfg_id": "m32x3x256_cap0.5_Rh",
+      "model_size": "m32x3x256",
+      "members": 32,
+      "blocks": 3,
+      "width": 256,
+      "residual_cap": 0.5,
+      "residual_inputs": "Rh",
+      "selected_penalty": 0.03,
+      "penalties_swept": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "source_file": "audit_arrays/m32x3x256_cap0.5_Rh/pen0.03_candidate_residuals.npz",
+      "source_sha256": "878b764a93d064ba82d05367c8aaecca3461ff2e8bf18e365bcbea19fc80bcab",
+      "oof_logloss": 0.2587090282969246,
+      "oof_logloss_improvement": 0.0001516081686724,
+      "oof_logloss_improvement_se": 0.0002044525268934,
+      "oof_auc_improvement": 6.465742569894406e-05,
+      "oof_brier_improvement": 7.727313442505712e-05,
+      "monotonicity": {
+        "grid_status": "GRIDPASS",
+        "mono_pass": true,
+        "grid_violations": 0,
+        "min_R_derivative": 0.954948077154302,
+        "min_hours_derivative": 0.1501226823114987
+      },
+      "normalized_base_hours_coefficient": 0.1835990583402249,
+      "normalized_base_income_coefficient": 0.194417038012115
+    }
+  ],
+  "oof_logloss_improvement_mean_of_members": 0.000224970141632525,
+  "oof_note": "Per-member OOF improvements are reported; the ensemble itself has no separate OOF estimate.",
+  "monotonicity": {
+    "grid_status": "GRIDPASS",
+    "method": "Autograd on a 41x41 R/hours grid (x5 log-income levels when income is a residual input); numerical grid only.",
+    "scope": "NUMERICAL_GRID_ONLY; not a global proof between grid points"
+  },
+  "deployment_base": {
+    "schema": [
+      "z_R",
+      "z_hours",
+      "z_log_income",
+      "remote"
+    ],
+    "fit_rows": 10000,
+    "coefficient_units": "full-history standard deviations",
+    "normalization_mean": [
+      27.722834000000073,
+      10.591,
+      11.028168369320207
+    ],
+    "normalization_scale": [
+      3.003931498701133,
+      3.8059910084965693,
+      0.4521400009168174
+    ],
+    "historical_logit_coefficients": [
+      4.115967643440909,
+      0.7556877834945858,
+      0.8002142377914869,
+      -1.9100008444042593
+    ],
+    "historical_intercept": -0.4244198891068136,
+    "deployment_coefficients": [
+      1.0,
+      0.18359905834022497,
+      0.19441703801211507
+    ],
+    "removed_at_deployment": [
+      "direct_remote_region_logit_term",
+      "constant_intercept"
+    ],
+    "warning": "Full learned income association retained: not proof of fairness; diagnostics only."
+  },
+  "residual_conversion": "r_logit * fold_sd_R / (fold_beta_R * full_history_sd_R)",
+  "label_warning": "Historical decision_octroi is committee output, not independent merit. OOF gains and all candidate files are UNVERIFIED diagnostics; full learned income association can retain unfair wealth proxies.",
+  "input_hashes": {
+    "history": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",
+    "candidates": "5e6f1fdca94fea5417984fa035c05e1b579ea09b3427a4e0f005a769618eb4a7"
+  },
+  "source_hashes": {
+    "m16x2x128_cap0.25_Rh": "d3ff6ad955ee417940a961029023998cbc060cad639ef0446c5538f07500ccdb",
+    "m16x2x128_cap0.5_Rh": "5b0ca55b206a37a6e19ed23de521ff153d04d3d6000f199af04474f577624219",
+    "m32x3x256_cap0.25_Rh": "36746a7932a656d80ca4d5567a4b6840b9b0796e6bfea0993a03a5de773a68bf",
+    "m32x3x256_cap0.5_Rh": "878b764a93d064ba82d05367c8aaecca3461ff2e8bf18e365bcbea19fc80bcab"
+  },
+  "residuals_sha256": "792974010ff8d61f6588a291dcfd03e8f1f6ef3c164a966e4d829f04e78112da"
+}

@@ -87,8 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="applications to decide (default: supplied evaluation data)")
     decide.add_argument("--out-dir", type=Path, default=PROJECT_ROOT, metavar="DIR",
                         help="where to write predictions.csv, decision_record.json, explanations.csv")
-    decide.add_argument("--residual-dir", type=Path, default=PROJECT_ROOT / "models/tabm_residual", metavar="DIR",
-                        help="TabM residual artefact (residuals.csv, manifest.json; default: models/tabm_residual)")
+    decide.add_argument("--residual-dir", type=Path, default=None, metavar="DIR",
+                        help="TabM residual artefact (residuals.csv, manifest.json; default: the configuration's artefact under models/)")
     decide.add_argument("--config", metavar="NAME", help="named policy configuration (default: the declared configuration)")
     decide.add_argument("--json", action="store_true", help="write the decision record as JSON to stdout")
 

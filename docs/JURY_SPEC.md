@@ -1,8 +1,8 @@
 # Jury specification (validator jury)
 
-Status: implemented (HEAD ac936d0 + uncommitted declared-config change in `src/policy/models.py`). Replaces the rank-vote jury (`Config.jury_weights`) in `FairPipeline`.
+Status: implemented. Replaces the rank-vote jury in `FairPipeline`; the declared configuration runs the jury in audit mode (section below).
 Conforms to `HARNESS_SPEC.md` (§3–5 boundaries, invariants) and `PREPROCESSING_SPEC.md` (scoring features).
-Evidence: §8. Study scripts: session scratchpad `validator_jury_study.py`, `jury_study.py` (not in the repo).
+Evidence: §8.
 
 ## 1. Concept
 
@@ -139,8 +139,7 @@ self-agreement.
 - Swap strength averages |juror percentile − cutoff| over dissenting jurors only (OVERTURN voters), so a confirming juror no longer dilutes it. Quorum stays 1.0.
 - Low-confidence trigger re-centred on the decision boundary (`JurySettings.conf = 0.05`, `JURY_REASONS = (near_cutoff, low_confidence, disagreement)`); see the last section.
 - `ADJUST_OFFSET.params` gains `offset_moved` (proposal changes from the offset alone, before the jury); `moved` stays the final diff.
-- Declared config stays the two-juror unanimous jury (user decision, WP9): `DECLARED_CONFIG = Config("validator jury")`. Merit-only was proposed
-  by the jury session and declined by the user; its evidence is kept below for the record.
+- The two-juror unanimous jury (`VALIDATOR_JURY_CONFIG`) stays available as a named configuration; the declared configuration is described in `CONSENSUS_TARGET_SPEC.md`. Merit-only was proposed and not retained; its evidence is kept below.
   Evidence, 10 splits, paired vs the previous two-juror unanimous config, ±2 SE: stress reference +0.0057 ± 0.0037; worst case over 2 refs +0.0034 ± 0.0039;
   quorum 0.5 two-juror on stress +0.0047 ± 0.0057; main model only on stress −0.016 ± 0.013. Caveat: the merit juror is also the merit reference.
   Real batch: triggered 201 (near_cutoff 200, disagreement 2), 37 swaps.
@@ -156,7 +155,7 @@ Open:
 - Corrector reach at the 0.05 alert threshold is untested on a real drifted batch (forced drift study, remote R −1.5, did not reach ALERT).
 - Merit self-agreement: the merit juror is also the merit reference, so merit-reference scores are partly self-agreement.
 
-## Low-confidence trigger, re-centred (user decision, integration)
+## Low-confidence trigger, re-centred
 
 Restored as `JurySettings.conf = 0.05`: an applicant is reviewed when abs(ranking score − boundary) < conf, where
 boundary = midpoint between the last granted and the first refused ranking score (after any offset), i.e. centred on
@@ -164,3 +163,11 @@ the decision actually being made, not on probability 0.5. Measured: boundary pro
 35 applicants lie within ±0.05, all inside the near-cutoff band, so decisions are unchanged on current data (10 splits:
 widths 0.01–0.08 identical to disabled). ±0.20 adds 5 reviews; ±0.40 reviews 1,729 applicants (avoid: equivalent to a
 very wide band). The trigger guards future, less confident main models.
+
+## Audit mode
+
+`JurySettings.audit_only = True` (declared configuration): the jury computes triggers, votes and the swaps it would make,
+and records them (`JuryOutcome.overturned_out`, `overturned_in`, `audit_only`), but `decisions` equals `proposed`. The
+record reports `jury.applied = false`; `explanations.csv` labels the outcome `contested_out` / `contested_in` /
+`contested_unpaired`. The jury guard measures the swaps actually applied, so in audit mode its fairness effect and swap
+volume are zero.

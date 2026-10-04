@@ -1,0 +1,95 @@
+{
+  "status": "complete",
+  "model": "tabm.TabM",
+  "device": "cuda",
+  "cuda_device": "Tesla T4",
+  "parameters": {
+    "train": "donnees_demandes.csv",
+    "candidates": "candidats_evaluation.csv",
+    "out_dir": "tabm_residual",
+    "folds": 5,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "penalties": [
+      0.1,
+      1.0
+    ],
+    "max_minutes": 60.0,
+    "epochs": 300,
+    "patience": 20,
+    "min_delta": 1e-05,
+    "batch_size": 512,
+    "members": 16,
+    "blocks": 2,
+    "width": 128,
+    "dropout": 0.1,
+    "learning_rate": 0.001,
+    "weight_decay": 0.01,
+    "residual_cap": 0.25,
+    "allow_cpu_smoke": false
+  },
+  "packages": {
+    "torch": "2.11.0+cu128",
+    "tabm": "0.0.3",
+    "numpy": "2.1.3",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.6.1"
+  },
+  "input_hashes": {
+    "history": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",
+    "candidates": "5e6f1fdca94fea5417984fa035c05e1b579ea09b3427a4e0f005a769618eb4a7"
+  },
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "folds": 5,
+  "smoke_only": false,
+  "label_warning": "Historical decision_octroi measures committee decisions, not independent deservingness. OOF improvement is diagnostic, not hidden accuracy.",
+  "validation": "Outer 5-fold historical OOF; outer and inner splits stratified by region and committee label. Normalizers and frozen linear model fit inner training rows only; inner 20% early stopping. Penalty selected by OOF historical log loss, with selection optimism.",
+  "residual_scaling": "Each fold's residual * sdR_fold / (betaR_fold * sdR_full), then average folds and seeds.",
+  "residuals_sha256": "86007c4ed5ac7ee8548837bcdbe6facea1feca21053ef1347e23a51fd1a27b8e",
+  "selected_penalty": 0.1,
+  "penalty_selection": [
+    {
+      "penalty": 0.1,
+      "historical_logloss": 0.2586938872577853,
+      "historical_brier": 0.0806067971840104,
+      "historical_auc": 0.9571683532624944
+    },
+    {
+      "penalty": 1.0,
+      "historical_logloss": 0.2588258178631303,
+      "historical_brier": 0.0806566786407736,
+      "historical_auc": 0.957115535107523
+    }
+  ],
+  "selected_oof_metrics": {
+    "historical_logloss": 0.2586938872577853,
+    "historical_brier": 0.08060679718401048,
+    "historical_auc": 0.9571683532624945
+  },
+  "frozen_baseline_oof_metrics": {
+    "historical_logloss": 0.25884075479619734,
+    "historical_brier": 0.08066276927052272,
+    "historical_auc": 0.9571112829750786
+  },
+  "oof_logloss_delta": -0.00014686753841203215,
+  "monotonicity": {
+    "residual_inputs": [
+      "cote_r_equivalent",
+      "heures_travail_semaine"
+    ],
+    "committee_hours_ratio": 0.18359905834022572,
+    "min_R_derivative": 0.9645827,
+    "min_hours_derivative": 0.1488024601118541,
+    "grid_violations": 0,
+    "grid_status": "GRIDPASS",
+    "scope": "NUMERICAL_GRID_ONLY; not a global proof between grid points"
+  },
+  "elapsed_minutes": 1.6855003363666667
+}

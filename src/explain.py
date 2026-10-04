@@ -9,11 +9,12 @@ def explain(pipeline, df, outcome, scores, offset, top=3):
     values = contributions.to_numpy()
     order = np.argsort(-np.abs(values), axis=1, kind="stable")
     triggered = np.asarray(outcome.triggered, dtype=bool)
+    prefix = "contested" if outcome.audit_only else "overturned"
     jury_outcome = np.full(len(df), "not_reviewed", dtype=object)
     jury_outcome[triggered] = "confirmed"
-    jury_outcome[np.asarray(outcome.overturned, dtype=bool)] = "overturn_unpaired"
-    jury_outcome[outcome.overturned_out] = "overturned_out"
-    jury_outcome[outcome.overturned_in] = "overturned_in"
+    jury_outcome[np.asarray(outcome.overturned, dtype=bool)] = f"{prefix}_unpaired"
+    jury_outcome[outcome.overturned_out] = f"{prefix}_out"
+    jury_outcome[outcome.overturned_in] = f"{prefix}_in"
     ranking = np.argsort(-np.asarray(scores), kind="stable")
     final_rank = np.empty(len(df), dtype=int)
     final_rank[ranking] = np.arange(1, len(df) + 1)
@@ -42,9 +43,12 @@ def explain(pipeline, df, outcome, scores, offset, top=3):
         },
         index=df.index,
     )
+    if outcome.deliberation is not None:
+        result["reasoning_outcome"] = outcome.deliberation.outcomes
+        result["reasoning_trace"] = outcome.deliberation.traces
     for i in range(top):
         result[f"factor_{i + 1}"] = [
             f"{contributions.columns[j]} {row[j]:+.2f}"
             for row, j in zip(values, order[:, i])
-        ]
+        ] if i < values.shape[1] else ""
     return result

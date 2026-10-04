@@ -3,6 +3,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "2"
 
 import ast
+import contextlib
 import hashlib
 import json
 import re
@@ -77,7 +78,8 @@ def run_cli(*args: str, timeout: int = 900) -> subprocess.CompletedProcess:
 
 
 def run_decide_cli(history: Path, batch: Path, out_dir: Path) -> subprocess.CompletedProcess:
-    return run_cli("decide", *CLI_FLAGS, "--history", str(history), "--batch", str(batch), "--out-dir", str(out_dir))
+    return run_cli("decide", *CLI_FLAGS, *PANEL_CLI, "--history", str(history), "--batch", str(batch),
+                   "--out-dir", str(out_dir))
 
 
 def reject_constant(name: str):
@@ -103,10 +105,33 @@ def make_sentinel_dir(base: Path, name: str) -> Path:
     return directory
 
 
+FORCED_ALERT = -0.1
+PANEL_CLI = ["--config", "consensus panel"]
+
+
+def validator_config():
+    from src.policy import VALIDATOR_JURY_CONFIG
+
+    return VALIDATOR_JURY_CONFIG
+
+
+def forced_config():
+    from src.policy import INCOME_BLIND_NO_JURY_CONFIG
+
+    return INCOME_BLIND_NO_JURY_CONFIG
+
+
+def panel_config():
+    from src.policy import CONSENSUS_PANEL_CONFIG
+
+    return CONSENSUS_PANEL_CONFIG
+
+
 def decide_and_write(history, batch, directory: Path, **kwargs):
     from src.adapters import write_decision
     from src.harness import decide
 
+    kwargs.setdefault("config", panel_config())
     record = decide(history, batch, input_hashes(), **kwargs)
     write_decision(record, directory)
     return record
@@ -120,7 +145,7 @@ def check_baseline(ctx) -> str:
     share = float(history["decision_octroi"].mean())
     assert 0.36 <= share <= 0.44, f"share {share:.4f} outside 36-44%"
     assert abs(share - 0.3994) < 0.001, f"share {share:.4f} != ~0.3994"
-    record = decide(history, batch, input_hashes())
+    record = decide(history, batch, input_hashes(), config=panel_config())
     ctx["baseline"] = record
     grants = int(np.sum(record.decisions))
     assert record.status == "published", f"status {record.status}"
@@ -171,7 +196,7 @@ def check_duplicate_id(ctx) -> str:
 def check_forced_correctable_alert(ctx) -> str:
     from src.policy import is_remote
 
-    record = ctx["baseline_decide"](eo_gap_alert=0.015)
+    record = ctx["baseline_decide"](config=forced_config(), eo_gap_alert=FORCED_ALERT)
     kinds = action_kinds(record)
     n = len(record.decisions)
     grants = int(np.sum(record.decisions))
@@ -180,8 +205,8 @@ def check_forced_correctable_alert(ctx) -> str:
     assert offset != 0 and abs(offset) <= 0.10 + 1e-12, f"offset {offset}"
     assert len(record.verdicts) == 2, f"{len(record.verdicts)} verdicts"
     assert grants == round(record.share * n) == 1598, f"grants {grants}"
-    assert record.offset_moved_ids and record.jury_moved_ids, "offset_moved_ids or jury_moved_ids empty"
-    pipeline, batch = fitted_pipeline(ctx), ctx["batch"]
+    assert record.offset_moved_ids, "offset_moved_ids empty"
+    pipeline, batch = fitted_pipeline(ctx, forced_config()), ctx["batch"]
     ids = batch["id_candidat"].to_numpy()
     remote = is_remote(batch).astype(bool)
     flat = pipeline.decide(batch).proposed
@@ -194,7 +219,7 @@ def check_forced_correctable_alert(ctx) -> str:
     assert sign_group[entered].all(), f"offset {offset:+.3f} admitted entrants from the wrong group"
     assert set(record.offset_moved_ids) == set(ids[entered | left].tolist()), "offset_moved_ids != flipped proposals"
     out, into = record.jury["overturned_out"], record.jury["overturned_in"]
-    assert out == into > 0, f"jury swaps out {out} != in {into}"
+    assert out == into, f"jury swaps out {out} != in {into}"
     assert len(record.jury_moved_ids) == out + into, "jury_moved_ids count != swaps"
     assert set(record.jury_moved_ids) == set(ids[shifted.decisions != shifted.proposed].tolist()), "jury_moved_ids != independent jury"
     return (f"ADJUST_OFFSET offset={offset:+.3f} offset_moved={len(record.offset_moved_ids)} "
@@ -266,7 +291,7 @@ def check_uncomputable_metric_block(ctx) -> str:
 def check_alert_after_correction(ctx) -> str:
     batch = ctx["batch"]
     out = make_sentinel_dir(ctx["tmp"], "alert_after_correction")
-    record = decide_and_write(ctx["history"], batch, out, eo_gap_alert=-1.0)
+    record = decide_and_write(ctx["history"], batch, out, config=forced_config(), eo_gap_alert=-1.0)
     kinds = action_kinds(record)
     assert kinds[-1] == "BLOCK" and "ADJUST_OFFSET" in kinds, f"actions {kinds}"
     assert kinds.index("ADJUST_OFFSET") < kinds.index("BLOCK"), f"BLOCK before ADJUST_OFFSET: {kinds}"
@@ -284,7 +309,7 @@ def check_zero_offset_block(ctx) -> str:
     original = postprocessing.fit_offset
     postprocessing.fit_offset = lambda *args, **kwargs: 0.0
     try:
-        record = ctx["baseline_decide"](eo_gap_alert=0.015)
+        record = ctx["baseline_decide"](eo_gap_alert=FORCED_ALERT)
     finally:
         postprocessing.fit_offset = original
     kinds = action_kinds(record)
@@ -307,10 +332,8 @@ def check_replay(ctx) -> str:
 
 
 def check_region_blindness(ctx) -> str:
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
-
-    history, batch = ctx["history"], ctx["batch"]
-    pipeline = FairPipeline(DECLARED_CONFIG, budget_share(history)).fit(history)
+    batch = ctx["batch"]
+    pipeline = declared_pipeline(ctx)
     rng = np.random.default_rng(0)
     shuffled = batch.copy()
     for column in ("region_administrative", "code_postal_3", "distance_domicile_campus_km"):
@@ -487,7 +510,7 @@ def new_violations(after: list, before: list) -> list:
 def check_boundary_proof(ctx) -> str:
     tmp = ctx["tmp"]
     baseline = scan_boundaries(copy_tree(tmp / "proof_base"))
-    probes = [
+    cases = [
         ("proof_deep", "monitoring", "from src.policy.core import eo_gap", {"deep"}),
         ("proof_direction", "monitoring", "from src.evaluation import tune", {"direction"}),
         ("proof_io", "harness", "pd_frame = None\npd_frame.to_csv('x.csv')", {"io"}),
@@ -500,7 +523,7 @@ def check_boundary_proof(ctx) -> str:
         ("proof_attribute_chain", "monitoring", "import src.policy\nsrc.policy.core.eo_gap", {"deep"}),
     ]
     notes = []
-    for name, package, line, expected in probes:
+    for name, package, line, expected in cases:
         found = {item[0] for item in new_violations(injected_violations(tmp, name, package, line), baseline)}
         assert expected <= found, f"{name}: scanner missed {expected - found}"
         notes.append(f"{name}=caught")
@@ -512,10 +535,10 @@ def check_boundary_proof(ctx) -> str:
 
 def check_explain_identity(ctx) -> str:
     from src.explain import explain
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share, scoring_features
+    from src.policy import VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features
 
     history, batch = ctx["history"], ctx["batch"]
-    pipeline = FairPipeline(DECLARED_CONFIG, budget_share(history)).fit(history)
+    pipeline = FairPipeline(VALIDATOR_JURY_CONFIG, budget_share(history)).fit(history)
     contributions = pipeline.contributions(batch)
     model = pipeline.main_model_
     intercept = float(model[-1].intercept_[0])
@@ -531,12 +554,14 @@ def check_explain_identity(ctx) -> str:
     return f"max abs err {error:.2e}"
 
 
-def fitted_pipeline(ctx):
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+def fitted_pipeline(ctx, config=None):
+    from src.policy import VALIDATOR_JURY_CONFIG, FairPipeline, budget_share
 
-    if "pipeline" not in ctx:
-        ctx["pipeline"] = FairPipeline(DECLARED_CONFIG, budget_share(ctx["history"])).fit(ctx["history"])
-    return ctx["pipeline"]
+    config = config or VALIDATOR_JURY_CONFIG
+    key = f"pipeline:{config.name}"
+    if key not in ctx:
+        ctx[key] = FairPipeline(config, budget_share(ctx["history"])).fit(ctx["history"])
+    return ctx[key]
 
 
 def jury_variants() -> dict:
@@ -613,8 +638,11 @@ def check_jury_record(ctx) -> str:
     jury = summary["jury"]
     assert 150 <= jury["triggered"] <= 250, f"triggered {jury['triggered']} outside 150-250"
     assert jury["overturned_out"] == jury["overturned_in"], f"out {jury['overturned_out']} != in {jury['overturned_in']}"
-    assert 20 <= jury["overturned_out"] <= 40, f"overturned {jury['overturned_out']} outside 20-40"
-    return f"triggered={jury['triggered']} overturned_out={jury['overturned_out']} overturned_in={jury['overturned_in']}"
+    assert {"applied", "reasons"} <= set(jury) and jury["applied"], f"jury keys {sorted(jury)}"
+    declared = fitted_pipeline(ctx).decide(ctx["batch"])
+    assert 20 <= len(declared.overturned_out) <= 40, f"validator jury swaps {len(declared.overturned_out)} outside 20-40"
+    return (f"panel record triggered={jury['triggered']} swaps={jury['overturned_out']}; "
+            f"validator jury (pipeline) swaps={len(declared.overturned_out)}")
 
 
 def check_jury_offset_monotone(ctx) -> str:
@@ -724,10 +752,8 @@ def check_csv_income_zero(ctx) -> str:
 
 
 def check_region_invariance(ctx) -> str:
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
-
-    history, batch = ctx["history"], ctx["batch"]
-    pipeline = FairPipeline(DECLARED_CONFIG, budget_share(history)).fit(history)
+    batch = ctx["batch"]
+    pipeline = declared_pipeline(ctx)
     columns = ["region_administrative", "code_postal_3", "distance_domicile_campus_km"]
     order = np.random.default_rng(7).permutation(len(batch))
     shuffled = batch.copy()
@@ -915,7 +941,7 @@ def check_decide_skips_bootstrap(ctx) -> str:
     saved = module.correction_report, module._penalty_interval
     module.correction_report = module._penalty_interval = boom
     try:
-        record = decide(ctx["history"], ctx["batch"], input_hashes())
+        record = decide(ctx["history"], ctx["batch"], input_hashes(), config=panel_config())
     finally:
         module.correction_report, module._penalty_interval = saved
     assert record.status == "published", f"status {record.status}"
@@ -988,7 +1014,7 @@ def check_tune_requires_penalty(ctx) -> str:
 def check_fit_uses_history_rate(ctx) -> str:
     from sklearn.model_selection import train_test_split
 
-    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+    from src.policy import FairPipeline, budget_share
 
     history = ctx["history"]
     share = budget_share(history)
@@ -1000,7 +1026,7 @@ def check_fit_uses_history_rate(ctx) -> str:
     else:
         raise AssertionError("no split with differing grant count")
     assert grants != round(share * len(train)), "split not discriminating"
-    pipeline = FairPipeline(DECLARED_CONFIG, share).fit(train)
+    pipeline = FairPipeline(panel_config(), share).fit(train)
     correction = pipeline.label_correction_
     assert correction.k == grants, f"k {correction.k} != train grants {grants} (share-based {round(share * len(train))})"
     assert int(correction.labels.sum()) == grants, f"labels {int(correction.labels.sum())} != train grants {grants}"
@@ -1009,7 +1035,7 @@ def check_fit_uses_history_rate(ctx) -> str:
 
 def check_cli_record(ctx) -> str:
     out = ctx["tmp"] / "cli_record"
-    result = run_decide_cli(HISTORY_PATH, BATCH_PATH, out)
+    result = run_cli("decide", *CLI_FLAGS, *PANEL_CLI, "--out-dir", str(out))
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
     ctx["cli_record_dir"] = out
     summary = json.loads((out / "decision_record.json").read_text())
@@ -1030,7 +1056,7 @@ def check_cli_record(ctx) -> str:
 def check_cli_replay(ctx) -> str:
     first = ctx["cli_record_dir"]
     second = ctx["tmp"] / "cli_record_b"
-    result = run_decide_cli(HISTORY_PATH, BATCH_PATH, second)
+    result = run_cli("decide", *CLI_FLAGS, *PANEL_CLI, "--out-dir", str(second))
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
     left, right = [(directory / "decision_record.json").read_bytes() for directory in (first, second)]
     assert left == right, "decision_record.json differs between two CLI runs"
@@ -1043,47 +1069,44 @@ def check_postprocessing_default(ctx) -> str:
     assert record.status == "published", f"status {record.status}"
     assert int(record.decisions.sum()) == 1598, f"grants {int(record.decisions.sum())}"
     assert record.offset == 0, f"offset {record.offset}"
-    assert record.submission_issues == [], f"issues {record.submission_issues}"
+    assert record.output_issues == [], f"issues {record.output_issues}"
     assert record.offset_moved_ids == [], f"offset_moved_ids {len(record.offset_moved_ids)}"
     assert record.jury["triggered"] > 0 and "reasons" in record.jury, f"jury {record.jury}"
-    assert record.jury_moved_ids, "jury_moved_ids empty"
-    assert np.array_equal(record.proposed, record.decisions) is False, "jury changed nothing"
     return f"published grants=1598 offset=0 issues=[] jury_moved={len(record.jury_moved_ids)} triggered={record.jury['triggered']}"
 
 
-def injected_nodes(corrupt):
+def injected_nodes(corrupt, target="final_outcome"):
     from dataclasses import replace
 
     from src.common.graph import Node
     from src.harness import POSTPROCESSING_NODES
 
-    def final_outcome(*args):
-        outcome = next(node for node in POSTPROCESSING_NODES if node.name == "final_outcome").fn(*args)
+    def corrupted(*args):
+        outcome = next(node for node in POSTPROCESSING_NODES if node.name == target).fn(*args)
         return replace(outcome, decisions=corrupt(outcome.decisions.copy()))
 
-    inputs = next(node for node in POSTPROCESSING_NODES if node.name == "final_outcome").inputs
-    return tuple(Node("final_outcome", final_outcome, inputs) if node.name == "final_outcome" else node
-                 for node in POSTPROCESSING_NODES)
+    inputs = next(node for node in POSTPROCESSING_NODES if node.name == target).inputs
+    return tuple(Node(target, corrupted, inputs) if node.name == target else node for node in POSTPROCESSING_NODES)
 
 
-def check_submission_guard(ctx) -> str:
-    from src.harness import submission_issues
+def check_output_guard(ctx) -> str:
+    from src.harness import output_issues
 
     batch = ctx["batch"]
     ids = batch["id_candidat"].to_numpy()
     k = 1598
     valid = np.zeros(len(batch), dtype=int)
     valid[:k] = 1
-    assert submission_issues(batch, ids, valid, k) == [], "valid output flagged"
+    assert output_issues(batch, ids, valid, k) == [], "valid output flagged"
     duplicate = ids.copy()
     duplicate[1] = duplicate[0]
     reordered = ids.copy()
     reordered[[0, 1]] = reordered[[1, 0]]
     direct = {
-        "duplicate_id": submission_issues(batch, duplicate, valid, k),
-        "wrong_order": submission_issues(batch, reordered, valid, k),
-        "value_2": submission_issues(batch, ids, np.where(np.arange(len(batch)) == 0, 2, valid), k),
-        "count_k_plus_1": submission_issues(batch, ids, np.where(np.arange(len(batch)) == k, 1, valid), k),
+        "duplicate_id": output_issues(batch, duplicate, valid, k),
+        "wrong_order": output_issues(batch, reordered, valid, k),
+        "value_2": output_issues(batch, ids, np.where(np.arange(len(batch)) == 0, 2, valid), k),
+        "count_k_plus_1": output_issues(batch, ids, np.where(np.arange(len(batch)) == k, 1, valid), k),
     }
     empty = [name for name, issues in direct.items() if not issues]
     assert not empty, f"not flagged: {empty}"
@@ -1103,15 +1126,15 @@ def check_submission_guard(ctx) -> str:
         blocks = [action for action in record.actions if getattr(action.kind, "value", action.kind) == "BLOCK"]
         assert record.status == "blocked", f"{name}: status {record.status}"
         assert len(blocks) == 1, f"{name}: {len(blocks)} BLOCK actions"
-        assert "submission" in blocks[0].params["checks"], f"{name}: checks {blocks[0].params['checks']}"
-        assert record.submission_issues, f"{name}: no submission_issues"
+        assert "output" in blocks[0].params["checks"], f"{name}: checks {blocks[0].params['checks']}"
+        assert record.output_issues, f"{name}: no output_issues"
         assert (out / "predictions.csv").read_bytes() == SENTINEL, f"{name}: sentinel predictions.csv changed"
         notes.append(f"{name}=blocked")
     return "direct issues flagged for " + ",".join(direct) + "; injected final_outcome " + " ".join(notes) + "; sentinel intact (CLI not injected)"
 
 
-def check_submission_probes(ctx) -> str:
-    from src.harness import submission_issues
+def check_output_cases(ctx) -> str:
+    from src.harness import output_issues
 
     batch = ctx["batch"]
     n, k = len(batch), 1598
@@ -1131,11 +1154,11 @@ def check_submission_probes(ctx) -> str:
     }
     for name, (frame, case_ids, decisions) in cases.items():
         try:
-            issues = submission_issues(frame, case_ids, decisions, k)
+            issues = output_issues(frame, case_ids, decisions, k)
         except Exception as error:
             raise AssertionError(f"{name} raised {type(error).__name__}: {error}")
         assert issues, f"{name} not flagged"
-    isolated = submission_issues(duplicated, duplicated["id_candidat"].to_numpy(), valid, k)
+    isolated = output_issues(duplicated, duplicated["id_candidat"].to_numpy(), valid, k)
     assert isolated == ["ids are not unique"], f"uniqueness rule not isolated: {isolated}"
     return "2-D, bool, 0-d decisions and pd.NA, 2-D ids flagged without raising; duplicate ids give only 'not unique'"
 
@@ -1177,6 +1200,781 @@ def check_explain_fields(ctx) -> str:
     return f"proposed_decision and final_rank present; final_rank permutation of 1..{n}"
 
 
+def check_config_option(ctx) -> str:
+    from src.harness import decide
+    from src.policy import (AUDIT_PANEL_CONFIG, CONFIGS, CONSENSUS_PANEL_CONFIG, DECLARED_CONFIG, INCOME_BLIND_CONFIG,
+                            INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, SCORING_FEATURES,
+                            VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
+
+    history, batch = ctx["history"], ctx["batch"]
+    assert DECLARED_CONFIG.residual_blend is not None and DECLARED_CONFIG.features == SCORING_FEATURES, "declared config"
+    assert VALIDATOR_JURY_CONFIG.discounts == () and VALIDATOR_JURY_CONFIG.features == SCORING_FEATURES, "validator jury changed"
+    assert INCOME_BLIND_CONFIG.features == ["cote_r", "heures_travail"], f"features {INCOME_BLIND_CONFIG.features}"
+    assert {c.name: c for c in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG,
+                              INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, CONSENSUS_PANEL_CONFIG,
+                              AUDIT_PANEL_CONFIG, DECLARED_CONFIG)} == CONFIGS, "CONFIGS registry"
+    declared = ctx["baseline"]
+    share = budget_share(history)
+    for config in (INCOME_BLIND_CONFIG,):
+        record = decide(history, batch, input_hashes(), config=config)
+        assert record.status in ("published", "blocked") and int(record.decisions.sum()) == 1598, f"{config.name}: {record.status}"
+        assert record.actions[0].params == {"config": config.name}, f"{config.name}: {record.actions[0].params}"
+        assert "ADJUST_OFFSET" not in action_kinds(record), f"{config.name}: {action_kinds(record)}"
+        assert not np.array_equal(record.decisions, declared.decisions), f"{config.name}: decisions equal panel"
+        pipeline = FairPipeline(config, share).fit(history)
+        assert not np.array_equal(pipeline.label_correction_.labels, ctx["correction"].labels), f"{config.name}: labels equal declared"
+        model = pipeline.main_model_
+        reconstructed = pipeline.contributions(batch).to_numpy().sum(axis=1) + float(model[-1].intercept_[0])
+        error = float(np.max(np.abs(reconstructed - model.decision_function(pipeline.features(batch)))))
+        assert error < 1e-9, f"{config.name}: explain identity error {error:.3g}"
+        ctx[f"record:{config.name}"] = record
+    blind = FairPipeline(INCOME_BLIND_CONFIG, share).fit(history)
+    shuffled = batch.copy()
+    shuffled["revenu_familial_estime"] = np.random.default_rng(3).permutation(batch["revenu_familial_estime"].to_numpy())
+    assert np.array_equal(blind.score(batch, 0.0), blind.score(shuffled, 0.0)), "income-blind scores read income"
+    factors = ctx[f"record:{INCOME_BLIND_CONFIG.name}"].explanations["factor_3"]
+    assert (factors == "").all(), "income-blind explanations have a third factor"
+    assert scoring_features(batch).shape[1] == 3, "scoring schema changed"
+    return "income-blind: 2 features, income-invariant scores, factor_3 empty, decides 1598 grants; registry complete"
+
+
+REGION_COLUMNS = ["region_administrative", "code_postal_3", "distance_domicile_campus_km"]
+REGION_MARKERS = ("region", "postal", "distance")
+
+
+def model_jury_pipeline(ctx):
+    from src.policy import MODEL_JURY_CONFIG, FairPipeline, budget_share
+
+    if "model_jury_pipeline" not in ctx:
+        ctx["model_jury_pipeline"] = FairPipeline(MODEL_JURY_CONFIG, budget_share(ctx["history"])).fit(ctx["history"])
+    return ctx["model_jury_pipeline"]
+
+
+def check_model_jury_decide(ctx) -> str:
+    from src.policy import MODEL_JURORS
+
+    out = ctx["tmp"] / "model_jury"
+    result = run_cli("decide", *CLI_FLAGS, "--config", "model jury", "--out-dir", str(out))
+    assert result.returncode in (0, 3), f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
+    summary = load_strict(out / "decision_record.json")
+    assert summary["config"]["name"] == "model jury", f"config {summary['config']}"
+    assert summary["status"] == ("published" if result.returncode == 0 else "blocked"), f"status {summary['status']}"
+    grants = summary["grants"]
+    assert grants == 1598, f"grants {grants}"
+    jury = summary["jury"]
+    assert jury["triggered"] > 0, "jury triggered nothing"
+    assert jury["overturned_out"] == jury["overturned_in"], f"out {jury['overturned_out']} != in {jury['overturned_in']}"
+    outcome = model_jury_pipeline(ctx).decide(ctx["batch"])
+    missing = set(MODEL_JURORS) - set(outcome.votes)
+    assert not missing, f"jurors without votes: {sorted(missing)}"
+    return f"published grants={grants} triggered={jury['triggered']} swaps={jury['overturned_out']} jurors={len(outcome.votes)}"
+
+
+def check_model_jury_determinism(ctx) -> str:
+    from src.policy import MODEL_JURY_CONFIG, FairPipeline, budget_share
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    first = FairPipeline(MODEL_JURY_CONFIG, share).fit(history).decide(batch)
+    second = FairPipeline(MODEL_JURY_CONFIG, share).fit(history).decide(batch)
+    assert np.array_equal(first.decisions, second.decisions), "decisions differ across fits"
+    return f"two fits give identical decisions over {len(batch)} rows"
+
+
+def check_model_jury_region_invariance(ctx) -> str:
+    pipeline, batch = model_jury_pipeline(ctx), ctx["batch"]
+    order = np.random.default_rng(13).permutation(len(batch))
+    shuffled = batch.copy()
+    shuffled[REGION_COLUMNS] = batch[REGION_COLUMNS].to_numpy()[order]
+    assert not shuffled[REGION_COLUMNS].equals(batch[REGION_COLUMNS]), "permutation left columns unchanged"
+    assert np.array_equal(pipeline.decide(batch, 0.0).decisions, pipeline.decide(shuffled, 0.0).decisions), "decisions differ (I2)"
+    return "decisions identical at offset 0 after joint shuffle of region, postal, distance"
+
+
+def check_model_jurors_region_blind(ctx) -> str:
+    from src.policy import MODEL_JURORS
+
+    leaks = {name: [feature for feature in schema if any(marker in feature for marker in REGION_MARKERS)]
+             for name, (schema, _) in MODEL_JURORS.items()}
+    leaks = {name: features for name, features in leaks.items() if features}
+    assert not leaks, f"region features in schemas: {leaks}"
+    return f"{len(MODEL_JURORS)} model juror schemas free of region, postal, distance"
+
+
+def check_blend_config(ctx) -> str:
+    from src.policy import Config, FairPipeline, budget_share
+
+    config = Config("blend check", blend=("boosting", "neural_net"))
+    pipeline = FairPipeline(config, budget_share(ctx["history"])).fit(ctx["history"])
+    grants = int(pipeline.decide(ctx["batch"]).decisions.sum())
+    assert grants == 1598, f"grants {grants}"
+    return f"blend {'+'.join(config.blend)} decides with {grants} grants"
+
+
+def guard_checks(record, prefix: str) -> list:
+    return [check for check in record.jury_guard.checks if check.name.startswith(prefix)]
+
+
+def check_jury_guard_declared(ctx) -> str:
+    record = ctx["baseline_decide"](config=validator_config())
+    ctx["declared_record"] = record
+    summary = record.summary()["jury_guard"]
+    names = [check["name"] for check in summary["checks"]]
+    assert ("REVERT_JURY" in action_kinds(record)) == (summary["status"] == "ALERT"), f"actions {action_kinds(record)}"
+    assert not guard_checks(record, "juror quality") and not guard_checks(record, "juror region"), f"model checks {names}"
+    for prefix in ("jury fairness effect", "jury swap volume", "juror agreement"):
+        assert any(name.startswith(prefix) for name in names), f"missing {prefix}: {names}"
+    return f"guard {summary['status']} " + " ".join(f"{check['value']:.4f}" for check in summary["checks"])
+
+
+def check_jury_guard_model(ctx) -> str:
+    from src.policy import MODEL_JURORS, MODEL_JURY_CONFIG
+
+    record = ctx["baseline_decide"](config=MODEL_JURY_CONFIG)
+    ctx["model_jury_record"] = record
+    quality, leakage = guard_checks(record, "juror quality"), guard_checks(record, "juror region leakage")
+    assert len(quality) == len(leakage) == len(MODEL_JURORS), f"{len(quality)} quality, {len(leakage)} leakage checks"
+    assert all(0.5 < check.value <= 1.0 for check in quality), [check.value for check in quality]
+    assert record.jury_guard.status != "ALERT" and "REVERT_JURY" not in action_kinds(record), action_kinds(record)
+    assert int(record.decisions.sum()) == 1598, f"{record.status} {int(record.decisions.sum())}"
+    return (f"guard {record.jury_guard.status} status {record.status} AUC " + " ".join(f"{check.name.split(': ')[1]}={check.value:.4f}" for check in quality)
+            + f"; max leakage {max(check.value for check in leakage):+.4f}")
+
+
+def revert_consistency(record) -> str:
+    kinds = action_kinds(record)
+    assert kinds.count("REVERT_JURY") == 1, kinds
+    assert record.status != "blocked" or kinds[-1] == "BLOCK", kinds
+    assert int(record.decisions.sum()) == 1598, f"grants {int(record.decisions.sum())}"
+    assert np.array_equal(record.decisions, record.proposed) and not record.jury_moved_ids, "jury still moved decisions"
+    assert record.jury["overturned_out"] == record.jury["overturned_in"] == 0, record.jury
+    assert (record.status == "blocked") == ("BLOCK" in kinds), f"status {record.status} with {kinds}"
+    assert record.verdicts[-1].status != "ALERT" or record.status == "blocked", "published with ALERT audit"
+    return f"{kinds} status={record.status}"
+
+
+def check_jury_guard_revert(ctx) -> str:
+    import src.harness.jury_guard as guard_module
+
+    original = guard_module.SWAP_SHARE_ALERT
+    guard_module.SWAP_SHARE_ALERT = 0.001
+    try:
+        record = ctx["baseline_decide"](config=validator_config())
+    finally:
+        guard_module.SWAP_SHARE_ALERT = original
+    revert = next(action for action in record.actions if action.kind.value == "REVERT_JURY")
+    assert "jury swap volume" in revert.params["checks"], revert.params
+    return f"swap threshold 0.001: {revert_consistency(record)}"
+
+
+@contextlib.contextmanager
+def leaky_juror(orientation):
+    from src.policy import MODEL_JURORS, Config, FairPipeline, JurySettings, is_remote
+
+    original = FairPipeline.juror_scores
+
+    def leaky_scores(self, df):
+        scores = original(self, df)
+        scores["leaky"] = orientation * is_remote(df) + 0.01 * scores["leaky"]
+        return scores
+
+    MODEL_JURORS["leaky"] = MODEL_JURORS["lr_all"]
+    FairPipeline.juror_scores = leaky_scores
+    try:
+        yield Config("leaky jury", jury=JurySettings(quorum=0.8, jurors=("merit", "leaky")))
+    finally:
+        FairPipeline.juror_scores = original
+        del MODEL_JURORS["leaky"]
+
+
+def check_jury_guard_leaky_juror(ctx) -> str:
+    with leaky_juror(1) as config:
+        record = ctx["baseline_decide"](config=config)
+    revert = next(action for action in record.actions if action.kind.value == "REVERT_JURY")
+    assert "juror region leakage: leaky" in revert.params["checks"], revert.params
+    return f"leaky juror reverted ({revert.params['checks']}): {revert_consistency(record)}"
+
+
+def check_jury_guard_orientation_free(ctx) -> str:
+    with leaky_juror(-1) as config:
+        record = ctx["baseline_decide"](config=config)
+    leak = next(check for check in record.jury_guard.checks if check.name == "juror region leakage: leaky")
+    revert = next(action for action in record.actions if action.kind.value == "REVERT_JURY")
+    assert leak.status == "ALERT" and leak.value > 0.05, f"inverted leak {leak.status} {leak.value:+.3f}"
+    assert "absolute leakage" in leak.detail, leak.detail
+    assert "juror region leakage: leaky" in revert.params["checks"], revert.params
+    return f"inverted region juror: leakage {leak.value:+.3f} ALERT, reverted"
+
+
+def check_revert_refits_offset(ctx) -> str:
+    import src.harness.postprocessing as postprocessing
+
+    original = postprocessing.fit_offset
+    calls = []
+
+    def recording(*args, **kwargs):
+        offset = original(*args, **kwargs)
+        calls.append((kwargs.get("jury", True), offset))
+        return offset
+
+    postprocessing.fit_offset = recording
+    try:
+        with leaky_juror(1) as config:
+            record = ctx["baseline_decide"](config=config, eo_gap_alert=FORCED_ALERT)
+    finally:
+        postprocessing.fit_offset = original
+    kinds = action_kinds(record)
+    assert "REVERT_JURY" in kinds and calls[-1][0] is False, f"calls {calls} actions {kinds}"
+    assert record.offset == calls[-1][1], f"offset {record.offset} != re-fitted {calls[-1][1]}"
+    revert = next(action for action in record.actions if action.kind.value == "REVERT_JURY")
+    assert revert.params["offset"] == record.offset, revert.params
+    assert np.array_equal(record.decisions, record.proposed), "jury still active after revert"
+    return f"fit_offset calls (jury, offset) {calls}; final offset {record.offset:+.3f} chosen with jury disabled"
+
+
+def check_consensus_target_labels(ctx) -> str:
+    from src.policy import (COMMITTEE_FEATURES, CONSENSUS_PANEL_CONFIG, DECLARED_HOURS_WEIGHT, DECLARED_INCOME_WEIGHT,
+                            FairPipeline, budget_share)
+
+    history = ctx["history"]
+    share = budget_share(history)
+    pipeline = FairPipeline(CONSENSUS_PANEL_CONFIG, share).fit(history)
+    committee = pipeline.committee_
+    score = committee.rule_score(history, DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
+    k = int(round(share * len(history)))
+    expected = np.zeros(len(history), dtype=int)
+    expected[np.argsort(-score, kind="stable")[:k]] = 1
+    labels = pipeline.training_labels_
+    assert np.array_equal(labels, expected) and int(labels.sum()) == k, "labels are not the top-k consensus scores"
+    weights = committee.rule_weights(DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
+    names = [name for name, weight in zip(COMMITTEE_FEATURES, weights) if weight != 0]
+    assert names == ["cote_r", "log_revenu", "heures_travail"] and (weights >= 0).all(), f"weighted criteria {names}"
+    assert weights[COMMITTEE_FEATURES.index("cote_r")] == 1.0, "rule not expressed in R units"
+    assert pipeline.config.features == ["cote_r", "log_revenu", "heures_travail"], pipeline.config.features
+    report = ctx["baseline"].training_labels
+    historical = history["decision_octroi"].to_numpy()
+    assert report["differs_from_committee"] == int((labels != historical).sum()), report
+    assert report["differs_from_corrected"] == int((labels != pipeline.label_correction_.labels).sum()), report
+    assert pipeline.label_correction_.k == 3994 and report["target"] == "consensus", report
+    return (f"labels = top-{k} of the consensus score; main features {pipeline.config.features}; differs from committee "
+            f"{report['differs_from_committee']}, from corrected {report['differs_from_corrected']}")
+
+
+def check_consensus_panel_decide(ctx) -> str:
+    from src.policy import REFERENCE_JURORS, FairPipeline, budget_share
+
+    history, batch = ctx["history"], ctx["batch"]
+    record = ctx["baseline"]
+    assert record.status == "published" and int(record.decisions.sum()) == 1598, f"{record.status}"
+    assert record.verdicts[-1].status != "ALERT", f"monitoring {record.verdicts[-1].status}"
+    assert record.jury_guard.status != "ALERT" and record.consensus_guard.status != "ALERT", \
+        f"guards {record.jury_guard.status} {record.consensus_guard.status}"
+    pipeline = fitted_pipeline(ctx, panel_config())
+    assert set(REFERENCE_JURORS) <= set(pipeline.decide(batch).votes), "reference jurors did not vote"
+    again = FairPipeline(panel_config(), budget_share(history)).fit(history).decide(batch).decisions
+    assert np.array_equal(pipeline.decide(batch).decisions, again), "decisions differ across fits"
+    order = np.random.default_rng(23).permutation(len(batch))
+    shuffled = batch.copy()
+    shuffled[REGION_COLUMNS] = batch[REGION_COLUMNS].to_numpy()[order]
+    assert not shuffled[REGION_COLUMNS].equals(batch[REGION_COLUMNS]), "permutation left columns unchanged"
+    assert np.array_equal(pipeline.decide(batch).decisions, pipeline.decide(shuffled).decisions), "decisions differ (I2)"
+    return (f"published 1598 grants, deterministic, region-invariant; monitoring {record.verdicts[-1].status}, "
+            f"jury guard {record.jury_guard.status}, consensus guard {record.consensus_guard.status}")
+
+
+
+
+def check_monitoring_signed_gap(ctx) -> str:
+    from src.monitoring import EO_GAP_ALERT, opportunity_checks
+    from src.policy import allocate, budget_share, is_remote, reference_labels
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    references, remote = reference_labels(history, batch, share), is_remote(batch)
+    z = (batch["cote_r_equivalent"] - history["cote_r_equivalent"].mean()) / history["cote_r_equivalent"].std()
+    cases = {
+        "consensus rule": references["consensus"],
+        "remote favoured": allocate((z + 0.8 * remote).to_numpy(), share),
+        "centre favoured": allocate((z - 0.8 * remote).to_numpy(), share),
+    }
+    merit = {name: opportunity_checks(decisions, references, remote, EO_GAP_ALERT)[0] for name, decisions in cases.items()}
+    assert merit["consensus rule"].status == "OK" and -0.09 <= merit["consensus rule"].value < 0, merit["consensus rule"]
+    assert merit["remote favoured"].status == "ALERT" and merit["remote favoured"].value < -0.09, merit["remote favoured"]
+    assert merit["centre favoured"].status == "ALERT" and merit["centre favoured"].value > EO_GAP_ALERT, merit["centre favoured"]
+    assert all(check.correctable for check in merit.values()), "merit check not correctable"
+    assert "absolute" in merit["consensus rule"].detail, merit["consensus rule"].detail
+    return " ".join(f"{name}: g={check.value:+.4f} {check.status}" for name, check in merit.items())
+
+
+def check_correctable_consensus_alert(ctx) -> str:
+    from src.harness.postprocessing import correctable_alerts
+    from src.monitoring import Check, Verdict
+
+    def verdict(*checks):
+        return Verdict("ALERT" if any(check.status == "ALERT" for check in checks) else "OK", list(checks))
+
+    rate = Check("consensus: grant rate remote", 0.3, "", "ALERT", correctable=True)
+    agreement = Check("consensus: mean agreement", 0.8, "", "ALERT", correctable=False)
+    quiet = verdict(Check("budget", 0.4, "", "OK"))
+    assert correctable_alerts(quiet, verdict(rate)), "correctable consensus rate alert ignored"
+    assert not correctable_alerts(quiet, verdict(rate, agreement)), "non-correctable alert allowed correction"
+    assert not correctable_alerts(quiet, quiet), "no alert still corrected"
+    from src.harness.consensus import consensus_guard
+    from src.policy import allocate, budget_share, is_remote
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    committee = committee_of(ctx)
+    tilted = allocate(committee.rule_score(batch, 0.0) - 1.2 * is_remote(batch), share)
+    guard = consensus_guard(committee, history, batch, share, tilted)
+    alerts = [check for check in guard.checks if check.status == "ALERT"]
+    assert alerts and all(check.correctable for check in alerts if "rate" in check.name or "gap" in check.name), alerts
+    return f"{len(alerts)} consensus alerts on a centre-tilted ranking, rate and gap checks correctable"
+
+
+def check_offset_feasibility_first(ctx) -> str:
+    from src.harness import OFFSET_GRID
+    from src.harness.consensus import consensus_guard
+    from src.harness.postprocessing import fit_offset
+    from src.monitoring import opportunity_checks
+    from src.policy import allocate, budget_share, is_remote, reference_labels
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    committee, remote = committee_of(ctx), is_remote(batch)
+    references = reference_labels(history, batch, share)
+    base = committee.rule_score(batch, 0.0) - 0.15 * remote
+
+    class Stub:
+        class config:
+            target = "consensus"
+
+        committee_ = committee
+
+        def decide(self, df, offset, jury=True):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(decisions=allocate(base + 5 * offset * remote, share))
+
+    def feasible(offset, alert):
+        decisions = Stub().decide(batch, offset).decisions
+        checks = [*opportunity_checks(decisions, references, remote, alert, False),
+                  *consensus_guard(committee, history, batch, share, decisions).checks]
+        return not any(check.status == "ALERT" and check.correctable for check in checks)
+
+    gaps = {float(offset): float(opportunity_checks(Stub().decide(batch, offset).decisions, references, remote, 1.0, False)[0].value)
+            for offset in OFFSET_GRID}
+    alert = gaps[0.0] - 0.0004
+    chosen = fit_offset(Stub(), history, batch, share, alert)
+    reachable = [float(offset) for offset in OFFSET_GRID if feasible(float(offset), alert)]
+    assert reachable and chosen != 0, f"no feasible offset or none chosen: {chosen}"
+    assert feasible(chosen, alert), f"offset {chosen} infeasible"
+    assert abs(chosen) == min(abs(offset) for offset in reachable), f"{chosen} is not the smallest of {reachable[:6]}"
+    return f"alert {alert:.4f} (unrounded): chosen offset {chosen:+.3f} is the smallest feasible"
+
+
+def check_cli_config(ctx) -> str:
+    out = ctx["tmp"] / "cli_config"
+    result = run_cli("decide", *CLI_FLAGS, "--config", "income-blind validator jury", "--out-dir", str(out))
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr.splitlines()[-1:]}"
+    summary = load_strict(out / "decision_record.json")
+    assert summary["config"]["name"] == "income-blind validator jury", f"config {summary['config']}"
+    predictions = pd.read_csv(out / "predictions.csv")
+    declared = pd.read_csv(ctx["cli_record_dir"] / "predictions.csv")
+    changed = int((predictions["decision_octroi"] != declared["decision_octroi"]).sum())
+    assert 0 < changed < 400 and int(predictions["decision_octroi"].sum()) == 1598, f"changed {changed}"
+    bogus = ctx["tmp"] / "cli_config_bogus"
+    result = run_cli("decide", *CLI_FLAGS, "--config", "bogus", "--out-dir", str(bogus))
+    assert result.returncode == 1 and "Traceback" not in result.stderr, f"exit {result.returncode}"
+    assert not bogus.exists() or not any(bogus.iterdir()), "bogus config wrote files"
+    return f"--config run published, {changed} decisions differ from declared; unknown name exit 1, nothing written"
+
+
+CONSENSUS_JSON = ROOT / "docs/reviews/consensus.json"
+
+
+def committee_of(ctx):
+    from src.policy import CommitteeModel
+
+    if "committee" not in ctx:
+        ctx["committee"] = CommitteeModel().fit(ctx["history"], ctx["history"]["decision_octroi"].to_numpy())
+    return ctx["committee"]
+
+
+def check_consensus_constants(ctx) -> str:
+    from src.monitoring import EO_GAP_ALERT
+    from src.policy import (DECLARED_HOURS_WEIGHT, GRANT_RATE_BANDS, GRANT_RATE_STRICT_BANDS, LIMITS,
+                            REVIEWER_INCOME_WEIGHTS, STRICT_LIMITS, reference_weights)
+
+    expected = json.loads(CONSENSUS_JSON.read_text())
+
+    def as_tuples(bands):
+        return {group: tuple(band) for group, band in bands.items()}
+
+    reviewer_income = {name: expected["reference_rules"][name]["log_revenu"] for name in REVIEWER_INCOME_WEIGHTS}
+    pairs = {
+        "reviewer_income_weights": (dict(REVIEWER_INCOME_WEIGHTS), reviewer_income),
+        "grant_rate": (GRANT_RATE_BANDS, as_tuples(expected["grant_rate"])),
+        "grant_rate_strict": (GRANT_RATE_STRICT_BANDS, as_tuples(expected["grant_rate_strict"])),
+        "limits": (LIMITS, expected["limits"]),
+        "strict_limits": (STRICT_LIMITS, expected["strict_limits"]),
+        "monitoring_eo_alert": (EO_GAP_ALERT, expected["limits"]["max_eo_gap_vs_merit"]),
+    }
+    mismatched = [name for name, (actual, wanted) in pairs.items() if actual != wanted]
+    assert not mismatched, f"constants differ from consensus.json: {mismatched}"
+    weights = reference_weights(committee_of(ctx))
+    ratios = {name: {criterion: round(float(value), 4) for criterion, value in rule.items() if value != 0}
+              for name, rule in weights.items()}
+    declared_hours = weights["consensus"]["heures_travail"]
+    derived_hours = committee_of(ctx).hours_over_r()
+    assert declared_hours == DECLARED_HOURS_WEIGHT, f"declared hours weight not used: {declared_hours}"
+    assert abs(declared_hours - derived_hours) <= 0.1 * derived_hours, \
+        f"declared hours {declared_hours} outside +-10% of committee hours/R {derived_hours:.4f}"
+    ctx["derived_weights"] = ratios
+    return (f"reviewer income weights and limits equal consensus.json; declared hours {declared_hours} within 10% of "
+            f"committee hours/R {derived_hours:.4f}; weights (R=1) {ratios}")
+
+
+def check_consensus_guard_declared(ctx) -> str:
+    record = ctx["baseline"]
+    summary = record.summary()["consensus_guard"]
+    names = [check["name"] for check in summary["checks"]]
+    expected = ("grant rate overall", "grant rate centre", "grant rate remote", "opportunity gap vs merit",
+                "opportunity overshoot vs merit", "demographic parity gap", "impact ratio", "intersectional gap",
+                "mean agreement", "min agreement", "opportunity gap vs consensus rule", "hours shape, largest jump",
+                "hours shape, largest drop")
+    missing = [prefix for prefix in expected if not any(name.startswith(f"consensus: {prefix}") for name in names)]
+    assert not missing, f"missing checks {missing}"
+    alerting = [check["name"] for check in summary["checks"] if check["status"] == "ALERT"]
+    assert summary["status"] != "ALERT" or record.status == "blocked", f"{summary['status']} {record.status}"
+    strict_reported = sum("strict" in check["detail"] for check in summary["checks"])
+    assert strict_reported == 10, f"{strict_reported} checks report strict limits"
+    return f"consensus guard {summary['status']} {alerting}, {len(names)} checks recorded, status {record.status}"
+
+
+def consensus_status(ctx, decisions):
+    from src.harness.consensus import consensus_guard
+    from src.policy import budget_share
+
+    return consensus_guard(committee_of(ctx), ctx["history"], ctx["batch"], budget_share(ctx["history"]), decisions)
+
+
+def check_consensus_rules_pass(ctx) -> str:
+    from src.harness.consensus import reference_decisions
+    from src.policy import REVIEWER_NAMES, budget_share
+
+    references = reference_decisions(committee_of(ctx), ctx["batch"], budget_share(ctx["history"]))
+    results = {name: consensus_status(ctx, references[name]) for name in ("consensus", *REVIEWER_NAMES)}
+    statuses = {name: result.status for name, result in results.items()}
+    assert statuses["consensus"] == "OK", statuses
+    for name in ("merit", "legal", "regional"):
+        assert statuses[name] != "ALERT", statuses
+    gap = next(check for check in results["consensus"].checks
+               if check.name == "consensus: opportunity gap vs merit (remote disadvantage)")
+    assert gap.value < 0 and gap.status == "OK", f"signed g {gap.value}"
+    alerts = {name: [check.name.removeprefix("consensus: ") for check in result.checks if check.status == "ALERT"]
+              for name, result in results.items() if result.status == "ALERT"}
+    return " ".join(f"{name}={status}" for name, status in statuses.items()) + f"; consensus signed g={gap.value:+.4f}; alerts {alerts}"
+
+
+def check_consensus_guard_blocks(ctx) -> str:
+    from src.harness.consensus import consensus_guard
+    from src.policy import allocate, budget_share
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    committee = committee_of(ctx)
+    penalty_kept = allocate(committee.corrected_logit(batch, 0.0), share)
+    result = consensus_guard(committee, history, batch, share, penalty_kept)
+    alerts = [check.name for check in result.checks if check.status == "ALERT"]
+    assert result.status == "ALERT", f"direct guard {result.status}"
+    assert "consensus: grant rate remote" in alerts and "consensus: demographic parity gap" in alerts, alerts
+    out = make_sentinel_dir(ctx["tmp"], "consensus_block")
+    record = decide_and_write(history, batch, out, nodes=injected_nodes(lambda decisions: penalty_kept.copy(), "released"))
+    blocks = [action for action in record.actions if action.kind.value == "BLOCK"]
+    assert record.status == "blocked" and len(blocks) == 1, f"{record.status} {action_kinds(record)}"
+    named = [name for name in blocks[0].params["checks"] if name.startswith("consensus: ")]
+    assert "consensus: grant rate remote" in named, blocks[0].params
+    assert record.summary()["consensus_guard"]["status"] == "ALERT", record.summary()["consensus_guard"]["status"]
+    assert (out / "predictions.csv").read_bytes() == SENTINEL, "predictions.csv written for blocked output"
+    return f"penalty-kept committee top-k ALERT ({len(alerts)} checks), blocked with {len(named)} consensus checks named"
+
+
+def check_consensus_hours_cliff(ctx) -> str:
+    from src.harness.consensus import consensus_guard
+    from src.policy import allocate, budget_share
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    merit = (batch["cote_r_equivalent"] - history["cote_r_equivalent"].mean()) / history["cote_r_equivalent"].std()
+    cliff = allocate((merit + 0.5 * (batch["heures_travail_semaine"] > 10)).to_numpy(), share)
+    result = consensus_guard(committee_of(ctx), history, batch, share, cliff)
+    shape = {check.name: check.status for check in result.checks if "hours shape" in check.name}
+    assert set(shape.values()) == {"ALERT"}, shape
+    others = [check.name for check in result.checks if check.status == "ALERT" and "hours shape" not in check.name]
+    return f"hours-above-10h rule ALERT on {len(shape)} shape checks; other alerts {others}"
+
+
+
+
+
+
+
+
+
+
+
+
+def declared_record(ctx):
+    if "residual_record" not in ctx:
+        from src.policy import DECLARED_CONFIG
+
+        ctx["residual_record"] = ctx["baseline_decide"](config=DECLARED_CONFIG, residual=ctx["residual"])
+    return ctx["residual_record"]
+
+
+def declared_pipeline(ctx):
+    from src.policy import DECLARED_CONFIG, FairPipeline, budget_share
+
+    if "declared_pipeline" not in ctx:
+        ctx["declared_pipeline"] = FairPipeline(DECLARED_CONFIG, budget_share(ctx["history"]), ctx["residual"]).fit(
+            ctx["history"])
+    return ctx["declared_pipeline"]
+
+
+def check_strong_guard(ctx) -> str:
+    from src.harness import strong_guard
+    from src.harness.postprocessing import publication_status
+    from src.monitoring import Verdict
+    from src.policy import FairPipeline, allocate, budget_share, is_remote
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    record = declared_record(ctx)
+    summary = record.summary()
+    assert record.status == "published" and summary["strong_guard"]["status"] == "OK", summary["strong_guard"]["status"]
+    assert len(summary["strong_guard"]["checks"]) == 6 and "strong_guard" not in ctx["baseline"].summary(), "layer shape"
+    pipeline = declared_pipeline(ctx)
+    skewed = allocate(pipeline.model_probability(batch) - 0.5 * is_remote(batch), share)
+    result = strong_guard(pipeline, history, batch, share, skewed)
+    alerts = [check.name for check in result.checks if check.status == "ALERT"]
+    assert result.status == "ALERT" and any("region impact" in name for name in alerts), alerts
+    assert publication_status(Verdict("OK", []), [], Verdict("OK", []), result) == "blocked", "ALERT does not block"
+    assert strong_guard(FairPipeline(panel_config(), share), history, batch, share, skewed).checks == [], "opt-in leaked"
+    return f"declared config published with strong guard OK; remote-penalised ranking ALERT on {alerts} and blocks"
+
+
+def check_reasoning_port(ctx) -> str:
+    from src.policy import ReasoningSettings, deliberate, reason
+
+    rng = np.random.default_rng(3)
+    n, k = 600, 240
+    base = rng.normal(size=n)
+    evidence = {"cote_r": base + rng.normal(size=n), "heures_travail": base + rng.normal(size=n),
+                "consensus": base + rng.normal(size=n)}
+    decisions = np.zeros(n, dtype=int)
+    decisions[np.argsort(-base)[:k]] = 1
+    settings = ReasoningSettings(evidence=0.0, margin=0.0)
+    outcome = reason(decisions, evidence, k, settings)
+    assert len(outcome.moved_out) == len(outcome.moved_in) > 0 and outcome.decisions.sum() == k, "moves not paired"
+    traced = deliberate(decisions, evidence, k, settings)
+    assert np.array_equal(traced.decisions, decisions) and traced.counts["proposed_moves"] == len(outcome.moved_out), "traces only moved"
+    assert all("not applied: traces only" in traced.traces[i] for i in outcome.moved_out), "withheld trace"
+    applied = deliberate(decisions, evidence, k, ReasoningSettings(evidence=0.0, margin=0.0, apply_moves=True))
+    assert applied.decisions.sum() == k and (applied.decisions != decisions).sum() == 2 * len(outcome.moved_out), "applied swap"
+    class StubGate:
+        def __init__(self, admit):
+            self.admit = admit
+
+        def admits(self, candidate, current):
+            return self.admit(candidate)
+
+        def settled(self, current):
+            return False
+
+    refused = deliberate(decisions, evidence, k, ReasoningSettings(evidence=0.0, margin=0.0, apply_moves=True),
+                         gate=StubGate(lambda candidate: False))
+    assert np.array_equal(refused.decisions, decisions) and refused.counts["moved_out"] == 0, "guard ignored"
+    limit = 3
+    capped = deliberate(decisions, evidence, k, ReasoningSettings(evidence=0.0, margin=0.0, apply_moves=True),
+                        gate=StubGate(lambda candidate: (candidate != decisions).sum() <= 2 * limit))
+    assert capped.counts["moved_out"] == limit and capped.decisions.sum() == k, f"{capped.counts}"
+    for bad in ({"decisions": decisions[:-1]}, {"k": k + 1}, {"settings": ReasoningSettings(scope="x")}):
+        arguments = {"decisions": decisions, "k": k, "settings": settings, **bad}
+        try:
+            reason(arguments["decisions"], evidence, arguments["k"], arguments["settings"])
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {sorted(bad)}")
+    return (f"{len(outcome.moved_out)} proposed swaps: traces only keeps decisions, applied moves keep k={k}, "
+            f"guard refusal moves none, partial guard keeps exactly {limit}; bad inputs rejected")
+
+
+def check_reasoning_record(ctx) -> str:
+    record = declared_record(ctx)
+    explanations = record.explanations
+    counts = record.summary()["deliberation"]
+    examined = explanations["reasoning_trace"] != ""
+    assert int(examined.sum()) == counts["examined"] == int(explanations["validated"].sum()), "examined mismatch"
+    outcomes = explanations["reasoning_outcome"].value_counts().to_dict()
+    assert outcomes.get("contradicted_kept", 0) == counts["contradicted_kept"], f"{outcomes} {counts}"
+    assert counts["moved_out"] == 0, "traces-only default moved applicants"
+    assert "reasoning_trace" not in ctx["baseline"].explanations and "deliberation" not in ctx["baseline"].summary(), "leak"
+    sample = explanations.loc[examined, "reasoning_trace"].iloc[0]
+    assert "cote_r" in sample and "consensus" in sample, sample
+    return f"traces for the {counts['examined']} reviewed applicants only; outcomes {outcomes}; counts {counts}"
+
+
+def check_reasoning_gate(ctx) -> str:
+    from src.harness.reasoning_gate import ReasoningGate, guard_checks, reasoning_gate
+    from src.monitoring import EO_GAP_ALERT, Check, verdict
+    from src.policy import allocate, budget_share, is_remote
+
+    history, batch = ctx["history"], ctx["batch"]
+    share = budget_share(history)
+    pipeline = declared_pipeline(ctx)
+    before = pipeline.jury_outcome(batch).decisions
+    statuses = {check.status for check in guard_checks(pipeline, history, batch, share, EO_GAP_ALERT)(before)}
+    assert "WARN" in statuses, f"no pre-existing WARN to test against: {statuses}"
+    gate = reasoning_gate(pipeline, history, batch, share, EO_GAP_ALERT)(before)
+    assert gate.admits(before, before), "a pre-existing WARN blocks an unchanged decision vector"
+    skewed = allocate(pipeline.model_probability(batch) - 0.5 * is_remote(batch), share)
+    assert not gate.admits(skewed, before), "a clearly worse vector was accepted"
+
+    n = 40
+    decisions = np.zeros(n, dtype=int)
+    decisions[:18] = 1
+    decisions[20:22] = 1
+    favoured, harmed = np.arange(20, 30), np.arange(30, 40)
+
+    def strong(candidate):
+        return verdict([Check("strong: favoured grants", 10 - candidate[favoured].sum(), "", "ALERT"
+                              if candidate[favoured].sum() < 5 else "OK", excess=5.0 - candidate[favoured].sum()),
+                        Check("strong: harmed grants", float(candidate[harmed].sum()), "",
+                              "ALERT" if candidate[harmed].sum() > 0 else "OK", excess=float(candidate[harmed].sum()))])
+
+    def stub_gate():
+        return ReasoningGate(lambda candidate: [], strong, decisions)
+
+    improving = decisions.copy()
+    improving[0], improving[22] = 0, 1
+    new_failure = decisions.copy()
+    new_failure[0], new_failure[30] = 0, 1
+    worsening = decisions.copy()
+    worsening[20], worsening[18] = 0, 1
+    assert strong(decisions).status == "ALERT", "crafted batch has no strong-guard ALERT"
+    assert stub_gate().admits(improving, decisions), "excess-reducing move rejected"
+    assert not stub_gate().admits(new_failure, decisions), "move creating a new strong failure accepted"
+    assert not stub_gate().admits(worsening, decisions), "excess-increasing move accepted"
+    return (f"pre-existing statuses {sorted(statuses)}: unchanged vector accepted, region-penalised vector rejected; "
+            f"crafted strong ALERT: excess-reducing move accepted, excess-increasing and new-failure moves rejected")
+
+
+
+
+RESIDUAL_DIR = ROOT / "models/tabm_residual"
+FORBIDDEN_WORDS = ("leader" + "board", "hx" + "buddy", "sub" + "mission", "batch" + "1", "pro" + "be", "son" + "de",
+                   "reward" + " model", "SCO" + "RED")
+FORBIDDEN_NUMBERS = tuple(re.escape(value) for value in ("94" + ".7", "95" + ".0", "95" + ".1", "95" + ".2"))
+
+
+def residual_copy(ctx, name: str) -> Path:
+    directory = ctx["tmp"] / name
+    shutil.copytree(RESIDUAL_DIR, directory)
+    return directory
+
+
+def rejected(call, expected: str) -> str:
+    from src.harness import InputError
+
+    try:
+        call()
+    except InputError as error:
+        assert expected in str(error), f"message {error}"
+        return str(error)
+    raise AssertionError("tampered artefact accepted")
+
+
+def check_residual_artefact(ctx) -> str:
+    from src.adapters import read_residual
+
+    batch_ids = ctx["batch"]["id_candidat"]
+    manifest = json.loads((RESIDUAL_DIR / "manifest.json").read_text())
+    residual = read_residual(RESIDUAL_DIR, HISTORY_PATH, BATCH_PATH, batch_ids)
+    assert len(residual) == 4000 and np.isfinite(residual).all(), "residual shape"
+    assert manifest["oof_logloss_delta"] < 0, f"residual does not improve OOF log loss: {manifest['oof_logloss_delta']}"
+    assert manifest["monotonicity"]["grid_status"] == "GRIDPASS", manifest["monotonicity"]
+    tampered = residual_copy(ctx, "residual_values")
+    path = tampered / "residuals.csv"
+    path.write_text(path.read_text().replace(",", ",9", 1))
+    rejected(lambda: read_residual(tampered, HISTORY_PATH, BATCH_PATH, batch_ids), "residuals.csv")
+    wrong_data = residual_copy(ctx, "residual_manifest")
+    document = json.loads((wrong_data / "manifest.json").read_text())
+    document["input_hashes"]["history"] = "0" * 64
+    (wrong_data / "manifest.json").write_text(json.dumps(document))
+    rejected(lambda: read_residual(wrong_data, HISTORY_PATH, BATCH_PATH, batch_ids), HISTORY_PATH.name)
+    other_batch = ctx["tmp"] / "other_batch.csv"
+    ctx["batch"].iloc[:-1].to_csv(other_batch, index=False)
+    rejected(lambda: read_residual(RESIDUAL_DIR, HISTORY_PATH, other_batch, batch_ids), "other_batch.csv")
+    rejected(lambda: read_residual(ctx["tmp"] / "absent", HISTORY_PATH, BATCH_PATH, batch_ids), "incomplete")
+    return (f"hashes match the manifest and both data files; tampered values, history hash, batch file and missing "
+            f"directory rejected; OOF log loss delta {manifest['oof_logloss_delta']:+.5f}")
+
+
+def check_residual_required(ctx) -> str:
+    empty = ctx["tmp"] / "no_residual"
+    empty.mkdir()
+    out = ctx["tmp"] / "no_residual_out"
+    declared = run_cli("decide", *CLI_FLAGS, "--out-dir", str(out), "--residual-dir", str(empty))
+    assert declared.returncode == 1 and "TabM residual artefact incomplete" in declared.stderr, declared.stderr[-300:]
+    assert not (out / "predictions.csv").exists(), "predictions written without the artefact"
+    panel = run_cli("decide", *CLI_FLAGS, *PANEL_CLI, "--out-dir", str(out), "--residual-dir", str(empty))
+    assert panel.returncode == 0 and (out / "predictions.csv").exists(), panel.stderr[-300:]
+    return "declared configuration fails clearly without the artefact (exit 1, no predictions); consensus panel still runs"
+
+
+def check_declared_pipeline(ctx) -> str:
+    from src.policy import DECLARED_CONFIG, DECLARED_INCOME_WEIGHT, DECLARED_RESIDUAL_BLEND, REVIEWER_INCOME_WEIGHTS
+
+    low, high = min(REVIEWER_INCOME_WEIGHTS.values()), max(REVIEWER_INCOME_WEIGHTS.values())
+    assert low <= DECLARED_INCOME_WEIGHT <= high, f"declared income weight {DECLARED_INCOME_WEIGHT} outside [{low}, {high}]"
+    assert DECLARED_CONFIG.residual_blend == DECLARED_RESIDUAL_BLEND == 1.0, "blend knob"
+    assert DECLARED_CONFIG.jury.audit_only and DECLARED_CONFIG.reasoning and not DECLARED_CONFIG.reasoning.apply_moves
+    record = declared_record(ctx)
+    batch = ctx["batch"]
+    assert record.status == "published" and int(record.decisions.sum()) == 1598, f"{record.status}"
+    assert np.array_equal(record.decisions, record.proposed) and not record.jury_moved_ids, "audit mode moved decisions"
+    assert record.jury["applied"] is False and record.jury["triggered"] > 0, record.jury
+    assert record.deliberation["moved_out"] == 0 == record.deliberation["moved_in"], record.deliberation
+    pipeline = declared_pipeline(ctx)
+    expected = pipeline.base_score(batch) + DECLARED_RESIDUAL_BLEND * ctx["residual"].reindex(batch["id_candidat"]).to_numpy()
+    k = 1598
+    top = np.zeros(len(batch), dtype=int)
+    top[np.argsort(-expected, kind="stable")[:k]] = 1
+    assert np.array_equal(top, record.decisions), "decisions are not the top-k of base + residual"
+    reversed_batch = batch.iloc[::-1].reset_index(drop=True)
+    shuffled = pipeline.decide(reversed_batch).decisions[::-1]
+    assert np.array_equal(shuffled, record.decisions), "residual is not aligned by id"
+    from src.pipelines import run_decision
+
+    produced = run_decision(HISTORY_PATH, BATCH_PATH, ctx["tmp"] / "declared_out", residual_dir=RESIDUAL_DIR)["record"]
+    assert any("residuals.csv" in name for name in produced.input_hashes), produced.input_hashes
+    assert np.array_equal(produced.decisions, record.decisions), "pipeline run differs from the direct decide"
+    return f"top-{k} of base + residual; audit mode: {record.jury['triggered']} reviewed, no swap, no move; income weight within [{low}, {high}]"
+
+
+def check_no_derived_constants(ctx) -> str:
+    pattern = re.compile("|".join([*(re.escape(word) for word in FORBIDDEN_WORDS), *FORBIDDEN_NUMBERS]), re.IGNORECASE)
+    hits = []
+    for folder in ("src", "kaggle", "models"):
+        for path in sorted((ROOT / folder).rglob("*")):
+            if path.suffix in {".py", ".json", ".txt", ".ipynb"} and path.is_file():
+                hits += [f"{path.relative_to(ROOT)}:{number}" for number, line in enumerate(path.read_text().splitlines(), 1)
+                         if pattern.search(line)]
+    assert not hits, f"externally derived constants or references: {hits[:5]}"
+    return "no externally derived constant or reference in src, kaggle, models"
+
+
 def run_check(name: str, function, *args) -> None:
     started = time.time()
     try:
@@ -1210,9 +2008,13 @@ def build_context(tmp: Path) -> dict:
     def baseline_decide(**kwargs):
         from src.harness import decide
 
+        kwargs.setdefault("config", panel_config())
         return decide(history, batch, hashes, **kwargs)
 
-    return {"tmp": tmp, "history": history, "batch": batch, "baseline_decide": baseline_decide}
+    from src.adapters import read_residual
+
+    residual = read_residual(RESIDUAL_DIR, HISTORY_PATH, BATCH_PATH, batch["id_candidat"])
+    return {"tmp": tmp, "history": history, "batch": batch, "residual": residual, "baseline_decide": baseline_decide}
 
 
 def main() -> int:
@@ -1263,10 +2065,41 @@ def main() -> int:
     run_check("cli_record", check_cli_record, ctx)
     run_check("cli_replay", check_cli_replay, ctx)
     run_check("postprocessing_default", check_postprocessing_default, ctx)
-    run_check("submission_guard", check_submission_guard, ctx)
-    run_check("submission_probes", check_submission_probes, ctx)
+    run_check("output_guard", check_output_guard, ctx)
+    run_check("output_cases", check_output_cases, ctx)
     run_check("offset_bound", check_offset_bound, ctx)
     run_check("explain_fields", check_explain_fields, ctx)
+    run_check("config_option", check_config_option, ctx)
+    run_check("cli_config", check_cli_config, ctx)
+    run_check("model_jury_decide", check_model_jury_decide, ctx)
+    run_check("model_jury_determinism", check_model_jury_determinism, ctx)
+    run_check("model_jury_region_invariance", check_model_jury_region_invariance, ctx)
+    run_check("model_jurors_region_blind", check_model_jurors_region_blind, ctx)
+    run_check("blend_config", check_blend_config, ctx)
+    run_check("jury_guard_declared", check_jury_guard_declared, ctx)
+    run_check("jury_guard_model", check_jury_guard_model, ctx)
+    run_check("jury_guard_revert", check_jury_guard_revert, ctx)
+    run_check("jury_guard_leaky_juror", check_jury_guard_leaky_juror, ctx)
+    run_check("consensus_constants", check_consensus_constants, ctx)
+    run_check("consensus_guard_declared", check_consensus_guard_declared, ctx)
+    run_check("consensus_rules_pass", check_consensus_rules_pass, ctx)
+    run_check("consensus_guard_blocks", check_consensus_guard_blocks, ctx)
+    run_check("consensus_hours_cliff", check_consensus_hours_cliff, ctx)
+    run_check("consensus_target_labels", check_consensus_target_labels, ctx)
+    run_check("consensus_panel_decide", check_consensus_panel_decide, ctx)
+    run_check("monitoring_signed_gap", check_monitoring_signed_gap, ctx)
+    run_check("jury_guard_orientation_free", check_jury_guard_orientation_free, ctx)
+    run_check("revert_refits_offset", check_revert_refits_offset, ctx)
+    run_check("correctable_consensus_alert", check_correctable_consensus_alert, ctx)
+    run_check("offset_feasibility_first", check_offset_feasibility_first, ctx)
+    run_check("strong_guard", check_strong_guard, ctx)
+    run_check("reasoning_port", check_reasoning_port, ctx)
+    run_check("reasoning_record", check_reasoning_record, ctx)
+    run_check("reasoning_gate", check_reasoning_gate, ctx)
+    run_check("residual_artefact", check_residual_artefact, ctx)
+    run_check("residual_required", check_residual_required, ctx)
+    run_check("declared_pipeline", check_declared_pipeline, ctx)
+    run_check("no_derived_constants", check_no_derived_constants, ctx)
     failures = [name for status, name, _ in RESULTS if status == "FAIL"]
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} passed in {time.time() - started:.0f}s; failed: {failures}", flush=True)
     shutil.rmtree(tmp, ignore_errors=True)

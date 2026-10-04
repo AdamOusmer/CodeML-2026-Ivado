@@ -21,9 +21,11 @@ question, recorded as a limitation in `PREPROCESSING_SPEC.md` §1).
 
 - `LabelCorrection(frozen)`: `labels` (int array), `penalty` (float), `k` (int), `flipped_in` (index array: refused
   historically, positive after correction), `flipped_out` (granted historically, negative after correction).
-- `correct_labels(history, share, removal=1.0) -> LabelCorrection`. Uses `CommitteeModel`; deterministic. `share` must
+- `correct_labels(history, share, removal=1.0, discounts=()) -> LabelCorrection`. Uses `CommitteeModel`; deterministic. `share` must
   be the history's own grant rate; raises `ValueError` when `round(share x n)` differs from the history's grant count
-  (flips would be unequal).
+  (flips would be unequal). `discounts` = pairs `(committee criterion, share of its reward removed)`, applied by
+  `CommitteeModel.corrected_logit(df, removal, discounts)` as a scaling of that criterion's coefficient; the declared
+  configuration passes none (HARNESS_SPEC §2, §8).
 - `effective_removal(penalty, removal) -> float`: the penalty-sign rule (`penalty >= 0` → no removal). Shared by
   `correct_labels` and `reference_labels` (corrected reference used by monitoring, `fit_offset`, tuner, Pareto), so
   training labels and the corrected reference always agree.

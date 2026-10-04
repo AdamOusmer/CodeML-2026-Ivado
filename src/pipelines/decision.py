@@ -3,15 +3,16 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from src.adapters import read_inputs, save_figure, write_decision, write_table
+from src.adapters import RESIDUAL_FILE, read_inputs, sha256, read_residual, save_figure, write_decision, write_table
 from src.common.graph import Graph, Node
 from src.common.logging import get_logger
 from src.evaluation import pareto_report
 from src.harness import DecisionRecord, decide
-from src.policy import correction_report, report_warnings
+from src.policy import DECLARED_CONFIG, correction_report, report_warnings
 from src.preprocessing import validate_frames
 
 PIPELINE_WORKERS = 2
+DEFAULT_RESIDUAL_DIR = Path(__file__).resolve().parents[2] / "models/tabm_residual"
 
 logger = get_logger("pipelines")
 
@@ -31,8 +32,16 @@ def log_warnings(report) -> tuple[str, ...]:
     return warnings
 
 
-def hashes_of(inputs):
-    return inputs.hashes
+def hashes_of(inputs, config, residual_dir):
+    if config.residual_blend is None:
+        return inputs.hashes
+    return {**inputs.hashes, f"tabm_residual/{RESIDUAL_FILE}": sha256(Path(residual_dir) / RESIDUAL_FILE)}
+
+
+def load_residual(config, residual_dir, history_path, batch_path, batch):
+    if config.residual_blend is None:
+        return None
+    return read_residual(Path(residual_dir), history_path, batch_path, batch["id_candidat"])
 
 
 def share_of(record):
@@ -60,8 +69,9 @@ DECISION_NODES = (
     Node("batch", batch_of, ("inputs",)),
     Node("frame_report", validate_frames, ("history", "batch")),
     Node("frame_warnings", log_warnings, ("frame_report",)),
-    Node("hashes", hashes_of, ("inputs",)),
-    Node("decision", decide, ("history", "batch", "hashes"), after=("frame_report",)),
+    Node("hashes", hashes_of, ("inputs", "config", "residual_dir"), after=("residual",)),
+    Node("residual", load_residual, ("config", "residual_dir", "history_path", "batch_path", "batch")),
+    Node("decision", decide, ("history", "batch", "hashes", "config", "residual"), after=("frame_report",)),
     Node("share", share_of, ("decision",)),
     Node("correction_report", correction_report, ("history", "share"), after=("frame_report",)),
     Node("record", attach_correction, ("decision", "correction_report")),
@@ -77,14 +87,17 @@ DECISION = Graph(DECISION_NODES)
 FULL = Graph(DECISION_NODES + PARETO_NODES)
 
 
-def run_decision(history_path: Path, batch_path: Path, out_dir: Path, *,
-                 graph: Graph = DECISION, workers: int = PIPELINE_WORKERS) -> dict:
-    seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir}
+def run_decision(history_path: Path, batch_path: Path, out_dir: Path, *, config=DECLARED_CONFIG,
+                 residual_dir: Path = DEFAULT_RESIDUAL_DIR, graph: Graph = DECISION,
+                 workers: int = PIPELINE_WORKERS) -> dict:
+    seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir, "config": config,
+             "residual_dir": residual_dir}
     return graph.run(seeds, workers=workers)
 
 
 def run_full(history_path: Path, batch_path: Path, out_dir: Path, splits: int, pareto_workers: int, *,
-             graph: Graph = FULL, workers: int = PIPELINE_WORKERS) -> dict:
-    seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir,
-             "splits": splits, "pareto_workers": pareto_workers}
+             config=DECLARED_CONFIG, residual_dir: Path = DEFAULT_RESIDUAL_DIR, graph: Graph = FULL,
+             workers: int = PIPELINE_WORKERS) -> dict:
+    seeds = {"history_path": history_path, "batch_path": batch_path, "out_dir": out_dir, "config": config,
+             "residual_dir": residual_dir, "splits": splits, "pareto_workers": pareto_workers}
     return graph.run(seeds, workers=workers)

@@ -8,7 +8,11 @@ from matplotlib.figure import Figure
 from sklearn.ensemble import RandomForestClassifier
 
 from src.policy import (
-    DECLARED_CONFIG,
+    AUDIT_PANEL_CONFIG,
+    INCOME_BLIND_CONFIG,
+    VALIDATOR_JURY_CONFIG,
+    Config,
+    JurySettings,
     CommitteeModel,
     FairPipeline,
     allocate,
@@ -25,9 +29,16 @@ SEED = 42
 BAND_SWEEP = (0.0, 0.0125, 0.025, 0.05, 0.10)
 EXPGRAD_BOUNDS = [0.30, 0.20, 0.10, 0.05, 0.02, 0.01]
 REMOVALS = np.linspace(0, 1, 6)
-PANELS = [("eo_gap_corrected", "acc_historical"), ("eo_gap_merit", "acc_historical")]
-REPORT_COLUMNS = ["method", "grant_rate", "budget_ok", "rate_centre", "rate_remote", "eo_gap_corrected",
-                  "eo_gap_corrected_std", "eo_gap_merit", "eo_gap_merit_std", "agree_merit", "acc_historical", "pareto"]
+PANELS = [("eo_gap_reviewers_mean", "agree_reviewers_mean"), ("eo_gap_corrected", "acc_historical"),
+          ("eo_gap_merit", "acc_historical")]
+DECLARED_METHOD = f"declared base: {AUDIT_PANEL_CONFIG.name}"
+ANNOTATED = {DECLARED_METHOD: "déclaré : base de consensus, mode audit", VALIDATOR_JURY_CONFIG.name: "jury de validation",
+             INCOME_BLIND_CONFIG.name: "jury de validation, sans revenu",
+             "committee-corrected, no jury": "comité corrigé, sans jury"}
+REPORT_COLUMNS = ["method", "grant_rate", "budget_ok", "rate_centre", "rate_remote", "eo_gap_reviewers_mean",
+                  "eo_gap_reviewers_mean_std", "agree_reviewers_mean", "eo_gap_consensus", "agree_consensus", "g_merit",
+                  "eo_gap_corrected", "eo_gap_corrected_std", "eo_gap_merit", "eo_gap_merit_std", "agree_merit",
+                  "acc_historical", "pareto", "pareto_merit"]
 
 
 def labels(train):
@@ -85,7 +96,10 @@ def pipeline(config):
 
 
 def band_config(band):
-    return replace(DECLARED_CONFIG, name=f"band {band}", jury=replace(DECLARED_CONFIG.jury, band=band))
+    return replace(VALIDATOR_JURY_CONFIG, name=f"band {band}", jury=replace(VALIDATOR_JURY_CONFIG.jury, band=band))
+
+
+CORRECTED_NO_JURY_CONFIG = Config("committee-corrected, no jury", jury=JurySettings(jurors=()))
 
 
 def default_candidates() -> list[Candidate]:
@@ -98,7 +112,10 @@ def default_candidates() -> list[Candidate]:
         *[Candidate(f"committee, penalty removal={removal:.1f}", "penalty removal sweep", committee_removal(removal), removal)
           for removal in REMOVALS],
         *[Candidate(f"jury, band {band}", "jury band sweep", pipeline(band_config(band)), band) for band in BAND_SWEEP],
-        Candidate(f"declared: {DECLARED_CONFIG.name}", "full pipeline", pipeline(DECLARED_CONFIG)),
+        Candidate(CORRECTED_NO_JURY_CONFIG.name, "full pipeline", pipeline(CORRECTED_NO_JURY_CONFIG)),
+        Candidate(VALIDATOR_JURY_CONFIG.name, "full pipeline", pipeline(VALIDATOR_JURY_CONFIG)),
+        Candidate(INCOME_BLIND_CONFIG.name, "full pipeline", pipeline(INCOME_BLIND_CONFIG)),
+        Candidate(DECLARED_METHOD, "full pipeline", pipeline(AUDIT_PANEL_CONFIG)),
     ]
 
 
@@ -111,5 +128,6 @@ class ParetoReport:
 
 def pareto_report(history: pd.DataFrame, share: float, splits: int, workers: int) -> ParetoReport:
     summary = summarize(run(history, default_candidates(), share, splits, workers))
-    summary["pareto"] = pareto_mask(summary, *PANELS[1])
-    return ParetoReport(summary, summary[REPORT_COLUMNS], plot(summary, PANELS, splits))
+    summary["pareto"] = pareto_mask(summary, *PANELS[0])
+    summary["pareto_merit"] = pareto_mask(summary, *PANELS[2])
+    return ParetoReport(summary, summary[REPORT_COLUMNS], plot(summary, PANELS, splits, DECLARED_METHOD, ANNOTATED))

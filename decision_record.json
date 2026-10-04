@@ -1,18 +1,39 @@
 {
   "status": "published",
   "config": {
-    "name": "validator jury",
+    "name": "declared: base + TabM residual",
     "removal": 1.0,
     "jury": {
       "band": 0.025,
       "conf": 0.05,
       "disagree": 0.3,
-      "quorum": 1.0,
+      "quorum": 0.8,
       "jurors": [
-        "merit",
-        "programme_merit"
-      ]
-    }
+        "ref_merit",
+        "ref_need",
+        "ref_legal",
+        "ref_data_process",
+        "ref_regional"
+      ],
+      "audit_only": true
+    },
+    "discounts": [],
+    "blend": [],
+    "target": "consensus",
+    "reasoning": {
+      "variables": [
+        "cote_r",
+        "heures_travail",
+        "consensus"
+      ],
+      "evidence": 0.1,
+      "margin": 0.05,
+      "scope": "reviewed",
+      "pairing": "contradicted",
+      "apply_moves": false
+    },
+    "strong_guard": true,
+    "residual_blend": 1.0
   },
   "share": 0.3994,
   "grants": 1598,
@@ -23,13 +44,13 @@
       "kind": "SELECT_CONFIG",
       "reason": "declared configuration",
       "params": {
-        "config": "validator jury"
+        "config": "declared: base + TabM residual"
       }
     }
   ],
   "verdicts": [
     {
-      "status": "OK",
+      "status": "WARN",
       "checks": [
         {
           "name": "grant rate within budget",
@@ -37,47 +58,53 @@
           "threshold": "36%-44%",
           "status": "OK",
           "detail": "1,598 of 4,000",
-          "correctable": false
+          "correctable": false,
+          "excess": 0.0
         },
         {
           "name": "demographic parity gap (centre vs remote)",
-          "value": 0.05737080020385249,
+          "value": 0.005579011481203711,
           "threshold": "warn > 0.1",
           "status": "OK",
-          "detail": "centre 42.3%, remote 36.5%",
-          "correctable": false
+          "detail": "centre 40.2%, remote 39.6%",
+          "correctable": false,
+          "excess": 0.0
         },
         {
           "name": "impact ratio, lowest/highest region",
-          "value": 0.8193755403531372,
+          "value": 0.9155988731370411,
           "threshold": "warn < 0.8",
           "status": "OK",
-          "detail": "Cote-Nord 35.0% vs Capitale-Nationale 42.8%",
-          "correctable": false
+          "detail": "Bas-Saint-Laurent 37.9% vs Gaspesie-Iles-de-la-Madeleine 41.4%",
+          "correctable": false,
+          "excess": 0.0
         },
         {
           "name": "opportunity gap vs merit reference",
-          "value": 0.009661256115387484,
-          "threshold": "warn > 0.03, alert > 0.05",
+          "value": -0.06589662777040783,
+          "threshold": "ok in [-0.0882, 0.0378], alert outside [-0.09, 0.05]",
           "status": "OK",
-          "detail": "deserving = top R scores at the same budget",
-          "correctable": true
+          "detail": "deserving = top R scores at the same budget; centre minus remote -0.0659, absolute 0.0659",
+          "correctable": true,
+          "excess": -0.024103372229592163
         },
         {
           "name": "opportunity gap vs corrected committee",
-          "value": 0.01603941169884404,
-          "threshold": "warn > 0.03, alert > 0.05",
-          "status": "OK",
+          "value": 0.04702030912381505,
+          "threshold": "warn > 0.03",
+          "status": "WARN",
           "detail": "deserving = committee rule without regional penalty",
-          "correctable": true
+          "correctable": false,
+          "excess": 0.0
         },
         {
           "name": "largest intersectional gap (centre vs remote)",
-          "value": 0.0655400330479195,
+          "value": 0.020332355816226777,
           "threshold": "warn > 0.15",
           "status": "OK",
-          "detail": "first-generation",
-          "correctable": false
+          "detail": "income tercile 3",
+          "correctable": false,
+          "excess": 0.0
         },
         {
           "name": "proxy drift: region predictability (AUC change)",
@@ -85,7 +112,8 @@
           "threshold": "alert > +0.05",
           "status": "OK",
           "detail": "history 0.845, batch 0.853",
-          "correctable": false
+          "correctable": false,
+          "excess": -0.041883016157538824
         },
         {
           "name": "feature drift, max PSI",
@@ -93,7 +121,8 @@
           "threshold": "warn > 0.1, alert > 0.25",
           "status": "OK",
           "detail": "log_revenu (centre)",
-          "correctable": false
+          "correctable": false,
+          "excess": -0.237822548052703
         },
         {
           "name": "categorical drift, max PSI",
@@ -101,86 +130,16 @@
           "threshold": "warn > 0.1, alert > 0.25",
           "status": "OK",
           "detail": "programme_etudes (Gaspesie-Iles-de-la-Madeleine), largest shift Genie +7.98 points",
-          "correctable": false
+          "correctable": false,
+          "excess": -0.2117140023083967
         }
       ]
     }
   ],
   "proposed_grants": 1598,
-  "submission_issues": [],
+  "output_issues": [],
   "offset_moved_ids": [],
-  "jury_moved_ids": [
-    "C004620",
-    "C007357",
-    "C009200",
-    "C001899",
-    "C003643",
-    "C001760",
-    "C003360",
-    "C000352",
-    "C008334",
-    "C012511",
-    "C010924",
-    "C006411",
-    "C007779",
-    "C013424",
-    "C013151",
-    "C009441",
-    "C011393",
-    "C008863",
-    "C013546",
-    "C000385",
-    "C006395",
-    "C008908",
-    "C011403",
-    "C004541",
-    "C002781",
-    "C009286",
-    "C007625",
-    "C008855",
-    "C006690",
-    "C007410",
-    "C004599",
-    "C012096",
-    "C010695",
-    "C012542",
-    "C010997",
-    "C001213",
-    "C000766",
-    "C004316",
-    "C010653",
-    "C007012",
-    "C005171",
-    "C010045",
-    "C003871",
-    "C008358",
-    "C010148",
-    "C008598",
-    "C000222",
-    "C004210",
-    "C008439",
-    "C010524",
-    "C008102",
-    "C009702",
-    "C010310",
-    "C009412",
-    "C007338",
-    "C006691",
-    "C003885",
-    "C000169",
-    "C009640",
-    "C003609",
-    "C000790",
-    "C002916",
-    "C004913",
-    "C006584",
-    "C001031",
-    "C012963",
-    "C004261",
-    "C006403",
-    "C004591",
-    "C000638"
-  ],
+  "jury_moved_ids": [],
   "warnings": [],
   "label_correction": {
     "penalty": -1.9002359476848831,
@@ -196,25 +155,321 @@
     "flipped_in_remote": 432,
     "flipped_out_centre": 577
   },
-  "jury": {
-    "triggered": 201,
-    "overturned_out": 35,
-    "overturned_in": 35,
-    "reasons": {
-      "near_cutoff": 200,
-      "low_confidence": 35,
-      "disagreement": 2
+  "training_labels": {
+    "target": "consensus",
+    "grants": 3994,
+    "differs_from_committee": 1494,
+    "differs_from_corrected": 532,
+    "reference_weights": {
+      "consensus": {
+        "cote_r": 1.0,
+        "log_revenu": 0.025,
+        "heures_travail": 0.185,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      },
+      "merit": {
+        "cote_r": 1.0,
+        "log_revenu": 0.0,
+        "heures_travail": 0.1835056378191949,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      },
+      "need": {
+        "cote_r": 1.0,
+        "log_revenu": -0.05,
+        "heures_travail": 0.1835056378191949,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      },
+      "legal": {
+        "cote_r": 1.0,
+        "log_revenu": 0.0,
+        "heures_travail": 0.1835056378191949,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      },
+      "data_process": {
+        "cote_r": 1.0,
+        "log_revenu": 0.19,
+        "heures_travail": 0.1835056378191949,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      },
+      "regional": {
+        "cote_r": 1.0,
+        "log_revenu": 0.0,
+        "heures_travail": 0.1835056378191949,
+        "premiere_generation": 0.0,
+        "prog_Genie": 0.0,
+        "prog_Sante": 0.0,
+        "prog_Sciences": 0.0,
+        "prog_Sciences sociales": 0.0
+      }
+    },
+    "committee_hours_over_r": 0.1835056378191949,
+    "learned_ratios": {
+      "hours_over_r": 0.18905303811797167,
+      "income_over_r": 0.025561693395298384
     }
   },
+  "jury": {
+    "triggered": 200,
+    "overturned_out": 13,
+    "overturned_in": 13,
+    "applied": false,
+    "reasons": {
+      "near_cutoff": 200,
+      "low_confidence": 39,
+      "disagreement": 0
+    }
+  },
+  "deliberation": {
+    "examined": 200,
+    "proposed_moves": 5,
+    "moved_out": 0,
+    "moved_in": 0,
+    "contradicted_kept": 44,
+    "rounds": 0
+  },
+  "strong_guard": {
+    "status": "OK",
+    "checks": [
+      {
+        "name": "strong: consensus guard checks not OK",
+        "value": 0.0,
+        "threshold": "all OK",
+        "status": "OK",
+        "detail": "",
+        "correctable": false,
+        "excess": 0.0
+      },
+      {
+        "name": "strong: region impact ratio",
+        "value": 0.9155988731370411,
+        "threshold": ">= max(0.9, consensus rule 0.9039 - 0.01)",
+        "status": "OK",
+        "detail": "",
+        "correctable": false,
+        "excess": -0.015598873137041114
+      },
+      {
+        "name": "strong: worst programme / first-generation subgroup gap",
+        "value": 0.03865182436611009,
+        "threshold": "<= consensus rule 0.0395 + 0.01",
+        "status": "OK",
+        "detail": "",
+        "correctable": false,
+        "excess": -0.010824618560777648
+      },
+      {
+        "name": "strong: five-region merit gap",
+        "value": 0.08190476190476192,
+        "threshold": "<= consensus rule 0.0864 + 0.01",
+        "status": "OK",
+        "detail": "",
+        "correctable": false,
+        "excess": -0.014491475602586665
+      },
+      {
+        "name": "strong: worst reference gap beyond the consensus rule",
+        "value": 0.005786370492252835,
+        "threshold": "<= 0.01",
+        "status": "OK",
+        "detail": "need",
+        "correctable": false,
+        "excess": -0.0042136295077471655
+      },
+      {
+        "name": "strong: income cost share of the removed penalty",
+        "value": 0.03573714351329029,
+        "threshold": "<= 0.05",
+        "status": "OK",
+        "detail": "",
+        "correctable": false,
+        "excess": -0.014262856486709712
+      }
+    ]
+  },
+  "jury_guard": {
+    "status": "WARN",
+    "checks": [
+      {
+        "name": "jury fairness effect (opportunity gap, worst reference)",
+        "value": 0.0,
+        "threshold": "warn > 0.005, alert > 0.01",
+        "status": "OK",
+        "detail": "worst merit; merit +0.0000 corrected +0.0000 consensus +0.0000",
+        "correctable": false,
+        "excess": -0.01
+      },
+      {
+        "name": "jury swap volume",
+        "value": 0.0,
+        "threshold": "warn > 0.03, alert > 0.05",
+        "status": "OK",
+        "detail": "0 swaps",
+        "correctable": false,
+        "excess": -0.05
+      },
+      {
+        "name": "juror agreement: split share of triggered cases",
+        "value": 0.775,
+        "threshold": "warn > 0.5",
+        "status": "WARN",
+        "detail": "200 triggered cases",
+        "correctable": false,
+        "excess": 0.0
+      }
+    ]
+  },
+  "consensus_guard": {
+    "status": "OK",
+    "checks": [
+      {
+        "name": "consensus: grant rate overall",
+        "value": 0.3995,
+        "threshold": "warn outside [0.3639, 0.4360], alert outside (0.36, 0.44)",
+        "status": "OK",
+        "detail": "strict [0.38, 0.42] met",
+        "correctable": false,
+        "excess": -0.039500000000000035
+      },
+      {
+        "name": "consensus: grant rate centre",
+        "value": 0.4017706576728499,
+        "threshold": "warn outside [0.3821, 0.4271], alert outside (0.38, 0.43)",
+        "status": "OK",
+        "detail": "strict [0.42, 0.43] missed",
+        "correctable": true,
+        "excess": -0.021770657672849913
+      },
+      {
+        "name": "consensus: grant rate remote",
+        "value": 0.3961916461916462,
+        "threshold": "warn outside [0.3547, 0.4177], alert outside (0.35, 0.42)",
+        "status": "OK",
+        "detail": "strict [0.36, 0.38] missed",
+        "correctable": true,
+        "excess": -0.023808353808353777
+      },
+      {
+        "name": "consensus: opportunity gap vs merit (remote disadvantage)",
+        "value": -0.06589662777040783,
+        "threshold": "warn > 0.0378, alert > 0.05",
+        "status": "OK",
+        "detail": "TPR centre minus remote -0.0659 among pure-R top-k; strict 0.04 met",
+        "correctable": true,
+        "excess": -0.11589662777040784
+      },
+      {
+        "name": "consensus: opportunity overshoot vs merit (remote advantage)",
+        "value": 0.06589662777040783,
+        "threshold": "warn > 0.0882, alert > 0.09",
+        "status": "OK",
+        "detail": "TPR centre minus remote -0.0659 among pure-R top-k; strict 0.07 met",
+        "correctable": true,
+        "excess": -0.024103372229592163
+      },
+      {
+        "name": "consensus: demographic parity gap",
+        "value": 0.005579011481203711,
+        "threshold": "warn > 0.0725, alert > 0.08",
+        "status": "OK",
+        "detail": "centre 40.2%, remote 39.6%; strict 0.06 met",
+        "correctable": true,
+        "excess": -0.07442098851879629
+      },
+      {
+        "name": "consensus: impact ratio remote/centre",
+        "value": 0.9861139399439505,
+        "threshold": "warn < 0.8639, alert < 0.85",
+        "status": "OK",
+        "detail": "centre 40.2%, remote 39.6%; strict 0.9 met",
+        "correctable": true,
+        "excess": -0.1361139399439505
+      },
+      {
+        "name": "consensus: intersectional gap",
+        "value": 0.05018493150684933,
+        "threshold": "warn > 0.0950, alert > 0.1",
+        "status": "OK",
+        "detail": "12 cells, worst remote=1 first_gen=1 income_tercile=3; strict 0.08 met",
+        "correctable": true,
+        "excess": -0.04981506849315068
+      },
+      {
+        "name": "consensus: mean agreement with reviewer rules",
+        "value": 0.9806000000000001,
+        "threshold": "warn < 0.9350, alert < 0.93",
+        "status": "OK",
+        "detail": "merit 0.994 need 0.978 legal 0.994 data_process 0.945 regional 0.994; strict 0.96 met",
+        "correctable": false,
+        "excess": -0.05060000000000009
+      },
+      {
+        "name": "consensus: min agreement with reviewer rules",
+        "value": 0.945,
+        "threshold": "warn < 0.92, alert < 0.9",
+        "status": "OK",
+        "detail": "lowest data_process",
+        "correctable": false,
+        "excess": -0.04499999999999993
+      },
+      {
+        "name": "consensus: opportunity gap vs consensus rule",
+        "value": 0.0021561256081379376,
+        "threshold": "warn > 0.0540, alert > 0.06",
+        "status": "OK",
+        "detail": "strict 0.03 met",
+        "correctable": true,
+        "excess": -0.05784387439186206
+      },
+      {
+        "name": "consensus: hours shape, largest jump between adjacent 2-hour windows",
+        "value": 0.4555555555555556,
+        "threshold": "warn > 1.4 x consensus rule jump 0.406, alert > 1.7 x",
+        "status": "OK",
+        "detail": "89 window pairs within R deciles",
+        "correctable": false,
+        "excess": -0.2338888888888888
+      },
+      {
+        "name": "consensus: hours shape, largest drop with more hours",
+        "value": -0.0,
+        "threshold": "warn > 0.056 (reviewer rules' largest drop + 0.02), alert > 3.0 x 0.036",
+        "status": "OK",
+        "detail": "grant rate must not fall as hours rise",
+        "correctable": false,
+        "excess": -0.10714285714285714
+      }
+    ]
+  },
   "region_rates": {
-    "Bas-Saint-Laurent": 0.3532,
-    "Capitale-Nationale": 0.4275,
-    "Cote-Nord": 0.3503,
-    "Gaspesie-Iles-de-la-Madeleine": 0.387,
-    "Montreal": 0.4204
+    "Bas-Saint-Laurent": 0.379,
+    "Capitale-Nationale": 0.3983,
+    "Cote-Nord": 0.391,
+    "Gaspesie-Iles-de-la-Madeleine": 0.4139,
+    "Montreal": 0.4036
   },
   "input_hashes": {
     "donnees_demandes.csv": "a3ce4e56b691daa163e3a455a88e76f85e3a1c8e201293fd3a87516b163c1f6d",
-    "candidats_evaluation.csv": "5e6f1fdca94fea5417984fa035c05e1b579ea09b3427a4e0f005a769618eb4a7"
+    "candidats_evaluation.csv": "5e6f1fdca94fea5417984fa035c05e1b579ea09b3427a4e0f005a769618eb4a7",
+    "tabm_residual/residuals.csv": "86007c4ed5ac7ee8548837bcdbe6facea1feca21053ef1347e23a51fd1a27b8e"
   }
 }

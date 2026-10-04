@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -11,11 +11,11 @@ from sklearn.preprocessing import StandardScaler
 
 from src.common.graph import Graph, Node
 from src.policy import (BUDGET_BOUNDS, PROGRAMMES, REGIONS, SCORING_FEATURES, eo_gap, is_remote, reference_labels,
-                        scoring_features)
+                        scoring_features, signed_eo_gap, LIMITS, warn_level)
 
 DP_GAP_WARN = 0.10
 IMPACT_RATIO_WARN = 0.80
-EO_GAP_WARN, EO_GAP_ALERT = 0.03, 0.05
+EO_GAP_WARN, EO_GAP_ALERT = 0.03, LIMITS["max_eo_gap_vs_merit"]
 INTERSECTION_GAP_WARN = 0.15
 PROXY_AUC_DRIFT_ALERT = 0.05
 PSI_WARN, PSI_ALERT = 0.10, 0.25
@@ -34,6 +34,7 @@ class Check:
     status: str
     detail: str = ""
     correctable: bool = False
+    excess: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -41,10 +42,12 @@ class Check:
 
 def graded(name, value, warn, alert=None, *, higher_is_worse=True, threshold="", detail="", correctable=False):
     if np.isnan(value):
-        return Check(name, float("nan"), threshold, "ALERT", f"not computable: {detail}" if detail else "not computable")
+        return Check(name, float("nan"), threshold, "ALERT", f"not computable: {detail}" if detail else "not computable",
+                     excess=float("inf"))
     worse = (lambda limit: value > limit) if higher_is_worse else (lambda limit: value < limit)
     status = "ALERT" if alert is not None and worse(alert) else "WARN" if worse(warn) else "OK"
-    return Check(name, float(value), threshold, status, detail, correctable)
+    excess = 0.0 if alert is None else float(value - alert if higher_is_worse else alert - value)
+    return Check(name, float(value), threshold, status, detail, correctable, excess)
 
 
 def group_rate(decisions, mask):
@@ -82,8 +85,9 @@ def proxy_auc(df):
 
 
 def eo_gap_check(name, decisions, y_ref, remote, detail, alert):
-    return graded(name, eo_gap(decisions, y_ref, remote), EO_GAP_WARN, alert,
-                  threshold=f"warn > {EO_GAP_WARN}, alert > {alert}", detail=detail, correctable=True)
+    threshold = f"warn > {EO_GAP_WARN}" if alert is None else f"warn > {EO_GAP_WARN}, alert > {alert}"
+    return graded(name, eo_gap(decisions, y_ref, remote), EO_GAP_WARN, alert, threshold=threshold, detail=detail,
+                  correctable=alert is not None)
 
 
 def budget_check(decisions):
@@ -107,13 +111,32 @@ def impact_check(decisions, batch):
 
 
 def eo_merit_check(decisions, references, remote, eo_gap_alert):
-    return eo_gap_check("opportunity gap vs merit reference", decisions, references["merit"], remote,
-                        "deserving = top R scores at the same budget", eo_gap_alert)
+    name = "opportunity gap vs merit reference"
+    gap = signed_eo_gap(decisions, references["merit"], remote)
+    own = signed_eo_gap(references["consensus"], references["merit"], remote)
+    gap_warn = warn_level(own, eo_gap_alert)
+    overshoot_alert = LIMITS["max_eo_overshoot_vs_merit"]
+    overshoot_warn = warn_level(-own, overshoot_alert)
+    disadvantage = graded(name, gap, gap_warn, eo_gap_alert, correctable=True)
+    overshoot = graded(name, -gap, overshoot_warn, overshoot_alert, correctable=True)
+    worst = max((disadvantage, overshoot), key=lambda check: (STATUS_ORDER[check.status], check.excess))
+    threshold = (f"ok in [{-overshoot_warn:.4f}, {gap_warn:.4f}], alert outside [{-overshoot_alert}, {eo_gap_alert}]")
+    detail = f"deserving = top R scores at the same budget; centre minus remote {gap:+.4f}, absolute {abs(gap):.4f}"
+    if np.isnan(gap):
+        return replace(worst, threshold=threshold)
+    return replace(worst, value=float(gap), threshold=threshold, detail=detail,
+                   excess=max(disadvantage.excess, overshoot.excess))
 
 
-def eo_corrected_check(decisions, references, remote, eo_gap_alert):
+def eo_corrected_check(decisions, references, remote, eo_gap_alert, corrected_enforced):
     return eo_gap_check("opportunity gap vs corrected committee", decisions, references["corrected"], remote,
-                        "deserving = committee rule without regional penalty", eo_gap_alert)
+                        "deserving = committee rule without regional penalty",
+                        eo_gap_alert if corrected_enforced else None)
+
+
+def opportunity_checks(decisions, references, remote, eo_gap_alert, corrected_enforced=True):
+    return [eo_merit_check(decisions, references, remote, eo_gap_alert),
+            eo_corrected_check(decisions, references, remote, eo_gap_alert, corrected_enforced)]
 
 
 def eo_reviewed_check(decisions, reviewed, remote, eo_gap_alert):
@@ -197,7 +220,8 @@ CHECK_NODES = (
     Node("parity", parity_check, ("decisions", "remote")),
     Node("impact", impact_check, ("decisions", "batch")),
     Node("eo_merit", eo_merit_check, ("decisions", "references", "remote", "eo_gap_alert")),
-    Node("eo_corrected", eo_corrected_check, ("decisions", "references", "remote", "eo_gap_alert")),
+    Node("eo_corrected", eo_corrected_check,
+         ("decisions", "references", "remote", "eo_gap_alert", "corrected_enforced")),
     Node("eo_reviewed", eo_reviewed_check, ("decisions", "reviewed", "remote", "eo_gap_alert")),
     Node("intersection", intersection_check, ("decisions", "batch", "remote")),
     Node("proxy_drift", proxy_drift_check, ("history_auc", "batch_auc")),
@@ -215,9 +239,10 @@ MONITORING = monitoring_graph()
 
 def run_checks(history: pd.DataFrame, batch: pd.DataFrame, decisions: np.ndarray,
                reviewed: pd.Series | None = None, eo_gap_alert: float = EO_GAP_ALERT, *,
-               graph: Graph = MONITORING, workers: int = MONITOR_WORKERS) -> list[Check]:
+               corrected_enforced: bool = True, graph: Graph = MONITORING,
+               workers: int = MONITOR_WORKERS) -> list[Check]:
     seeds = {"history": history, "batch": batch, "decisions": decisions, "reviewed": reviewed,
-             "eo_gap_alert": eo_gap_alert}
+             "eo_gap_alert": eo_gap_alert, "corrected_enforced": corrected_enforced}
     return graph.run(seeds, targets=["checks"], workers=workers)["checks"]
 
 

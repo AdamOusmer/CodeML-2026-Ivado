@@ -1,38 +1,51 @@
-# ÉquiAlgo — our solution
+# ÉquiAlgo — notre solution
 
-The production model's bias is not noise: it is one flat regional penalty applied
-after merit. We remove that penalty from the historical training labels, then
-train a region-blind logistic regression on R score, log income, and hours
-worked. A validator jury (a merit juror and a programme-merit juror, both must
-agree to overturn) reviews borderline decisions before publication, and an
-automated harness audits the final decisions, applying at most one bounded
-correction or blocking the run. The grant budget matches the historical rate
-exactly: 39.94%.
+Le biais du modèle de production n'est pas du bruit : c'est une pénalité régionale plate (−1,90 logit, IC95 [−2,07 ;
+−1,73]) appliquée par-dessus le mérite, et le revenu familial agit en plus comme une pénalité régionale cachée (le
+revenu des régions éloignées est plus bas de 0,68 écart-type). Tout ce qui suit est construit à partir de l'historique
+des 10 000 demandes.
 
-### Results
+La décision est le top k (k = taux historique de 39,94 %, lu dans les données) du score `base + résidu` :
 
-| Metric | Baseline (production RF) | Declared (validator jury) |
+- **base** : règle de consensus des cinq examinateurs, en unités de cote R : cote R, un crédit linéaire pour les heures
+  (poids des heures 0,185, choix de modélisation déclaré, retenu par essais, proche du rapport heures/R de 0,1835 que
+  l'ajustement du comité donne à chaque exécution) et un petit poids du revenu (+0,025, choix de modélisation déclaré,
+  retenu par essais, dans la plage de désaccord des examinateurs de 0 à +0,19) ;
+- **résidu** : un TabM borné appris sur l'historique (`kaggle/train.py`), livré comme artefact vérifié par SHA-256
+  (`models/tabm_residual/`), mélangé à 1 (choix déclaré) ;
+- **jury et raisonnement en mode audit** : le panel des cinq règles vote et les décisions sont tracées, sans échange ;
+- un harnais automatisé audite le résultat (surveillance, garde du jury, garde du consensus, garde forte), applique au
+  plus un décalage borné (|δ| ≤ 0,10) ou bloque la publication.
+
+### Résultats (4 000 candidats)
+
+| Mesure | Production (RF) | Déclaré |
 |---|---|---|
-| EO gap vs corrected committee | 0.253 | 0.013 |
-| EO gap vs merit | 0.247 | 0.010 |
-| Grants | — | 1,598 |
-| Monitoring checks | — | all OK |
-| Acceptance checks | — | 34/34 |
+| Taux d'octroi centres / régions éloignées | 48,4 % / 27,3 % (historique) | 40,2 % / 39,6 % |
+| Écart EO signé vs mérite | 0,247 | −0,065 (OK) |
+| Ratio d'impact (plus basse / plus haute région) | — | 0,916 |
+| Octrois | — | 1 598 (décalage 0) |
+| Jury (mode audit) | — | 200 examinés, 14 échanges contestés, 0 appliqué |
+| Garde forte | — | OK |
+| Contrôles d'acceptation | — | 79/79 |
 
-Note: "corrected" and "merit" are our own proxy references, not the hidden
-reference standard used for judging.
+Alertes résiduelles (WARN) : écart EO vs comité corrigé 0,046, attendu car cette référence garde la récompense du
+revenu ; accord des jurés 0,78.
 
-### Deliverables
+Les références « mérite », « comité corrigé » et « consensus » sont nos propres références approximatives, pas le
+standard caché des juges. Voir `docs/FINDINGS.md` pour le diagnostic, les limites et les pistes rejetées.
+
+### Livrables
 
 - `predictions.csv`
-- `audit_rapport.ipynb`
+- `audit_rapport.ipynb` (généré par `scripts/build_audit_report.py`)
 - `model_corrige.py` + `pareto_front.png`
-- `presentation.pdf`
 - `docs/MONITORING_PLAN.md`
+- `models/tabm_residual/` et `kaggle/` (entraînement du résidu)
 
-### Quick start
+### Démarrage rapide
 
-With [uv](https://docs.astral.sh/uv/):
+Avec [uv](https://docs.astral.sh/uv/) :
 
 ```bash
 uv sync
@@ -42,18 +55,25 @@ uv run python -m src.main monitor
 OMP_NUM_THREADS=2 uv run python scripts/acceptance.py
 ```
 
-With pip:
+Avec pip :
 
 ```bash
 python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
 ```
 
-`data/` must contain the two supplied CSVs before running.
+`data/` doit contenir les deux CSV fournis avant de lancer quoi que ce soit. La configuration déclarée lit
+`models/tabm_residual/` et échoue clairement si l'artefact manque ou ne correspond pas aux données.
+
+Entraînement du résidu (GPU Kaggle gratuit) : `uv run python kaggle/build_notebook.py` génère un carnet qui exécute
+`kaggle/train.py` avec les deux CSV pour seules entrées ; copier `residuals.csv` et `manifest.json` dans
+`models/tabm_residual/`.
 
 ### Documentation
 
 - [docs/HARNESS_SPEC.md](docs/HARNESS_SPEC.md)
 - [docs/JURY_SPEC.md](docs/JURY_SPEC.md)
+- [docs/CONSENSUS_TARGET_SPEC.md](docs/CONSENSUS_TARGET_SPEC.md)
+- [docs/reviews/CONSENSUS.md](docs/reviews/CONSENSUS.md)
 - [docs/PREPROCESSING_SPEC.md](docs/PREPROCESSING_SPEC.md)
 - [docs/FINDINGS.md](docs/FINDINGS.md)
 - [docs/MONITORING_PLAN.md](docs/MONITORING_PLAN.md)
@@ -207,6 +227,6 @@ pip install -r requirements.txt
 `data/` is not versioned: copy the two supplied CSVs into `data/` before running.
 
 `model_corrige.py` writes `predictions.csv`, `resultats_pareto.csv` and `pareto_front.png`.
-`decide` runs the validator jury and writes the published decisions to `--out-dir`.
+`decide` runs the declared consensus panel pipeline and writes the published decisions to `--out-dir`.
 `monitor` runs the monitoring checks against the final decisions.
-`scripts/acceptance.py` runs the 34 acceptance checks.
+`scripts/acceptance.py` runs the 78 acceptance checks.

@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 
 from .core import allocate
 from .regions import is_remote
-from .schema import committee_features
+from .schema import COMMITTEE_FEATURES, committee_features
 
 NO_PENALTY_WARNING = "no regional penalty found"
 PENALTY_NOT_DISTINGUISHABLE_WARNING = "penalty not distinguishable from zero"
@@ -27,14 +27,28 @@ class CommitteeModel:
         self.remote_penalty_ = self.lr_.coef_[0][-1]
         return self
 
-    def corrected_logit(self, df, removal=1.0):
+    def corrected_logit(self, df, removal=1.0, discounts=()):
         Z = self.scaler_.transform(committee_features(df))
-        base = Z @ self.lr_.coef_[0][:-1] + self.lr_.intercept_[0]
+        kept = np.array([1.0 - dict(discounts).get(name, 0.0) for name in COMMITTEE_FEATURES])
+        base = Z @ (self.lr_.coef_[0][:-1] * kept) + self.lr_.intercept_[0]
         return base + (1.0 - removal) * self.remote_penalty_ * is_remote(df)
+
+    def hours_over_r(self):
+        coefficients = dict(zip(COMMITTEE_FEATURES, np.abs(self.lr_.coef_[0][:-1])))
+        return float(coefficients["heures_travail"] / coefficients["cote_r"])
+
+    def rule_weights(self, income_weight, hours_weight=None):
+        weights = {"cote_r": 1.0, "heures_travail": self.hours_over_r() if hours_weight is None else hours_weight,
+                   "log_revenu": income_weight}
+        return np.array([weights.get(name, 0.0) for name in COMMITTEE_FEATURES])
+
+    def rule_score(self, df, income_weight, hours_weight=None):
+        return self.scaler_.transform(committee_features(df)) @ self.rule_weights(income_weight, hours_weight)
 
 
 @dataclass(frozen=True)
 class LabelCorrection:
+    committee: CommitteeModel
     labels: np.ndarray
     penalty: float
     k: int
@@ -59,16 +73,16 @@ def effective_removal(penalty, removal):
     return removal if penalty < 0 else 0.0
 
 
-def correct_labels(history, share, removal=1.0):
+def correct_labels(history, share, removal=1.0, discounts=()):
     historical = history["decision_octroi"].to_numpy()
     committee = CommitteeModel().fit(history, historical)
     penalty = float(committee.remote_penalty_)
-    labels = allocate(committee.corrected_logit(history, effective_removal(penalty, removal)), share)
+    labels = allocate(committee.corrected_logit(history, effective_removal(penalty, removal), discounts), share)
     flipped_in = np.flatnonzero((historical == 0) & (labels == 1))
     flipped_out = np.flatnonzero((historical == 1) & (labels == 0))
     if len(flipped_in) != len(flipped_out):
         raise ValueError(f"Label correction flipped {len(flipped_in)} in but {len(flipped_out)} out")
-    return LabelCorrection(labels, penalty, int(round(share * len(history))), flipped_in, flipped_out)
+    return LabelCorrection(committee, labels, penalty, int(round(share * len(history))), flipped_in, flipped_out)
 
 
 def report_warnings(report):
@@ -118,7 +132,6 @@ def _slope_equality_test(history):
 
 def correction_report(history, share, n_boot=200, seed=0, workers=4):
     correction = correct_labels(history, share)
-    historical = history["decision_octroi"].to_numpy()
     remote = is_remote(history)
     statistic, df, p_value = _slope_equality_test(history)
     return CorrectionReport(

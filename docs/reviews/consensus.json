@@ -1,0 +1,90 @@
+{
+  "criteria": {"cote_r": 1.0, "log_revenu": 0.0, "heures_travail": 0.15, "premiere_generation": 0.0},
+  "programme_adjust": true,
+  "criteria_spread": {
+    "log_revenu": {"min": -0.05, "max": 0.19, "dissent": {"need": -0.05, "data_process": 0.19}},
+    "heures_travail": {"min": 0.10, "max": 0.20, "dissent": {"need": 0.10, "legal": 0.20, "data_process": 0.19}},
+    "premiere_generation": {"min": 0.0, "max": 0.0, "dissent": {}}
+  },
+  "standardization": "z-score with history mean/std; log for income; budget k=1598 of 4000 (top-k by score, ties by id_candidat)",
+  "reference_rules": {
+    "consensus": {"cote_r": 1.0, "log_revenu": 0.0, "heures_travail": 0.15, "premiere_generation": 0.0},
+    "merit": {"cote_r": 1.0, "log_revenu": 0.0, "heures_travail": 0.15, "premiere_generation": 0.0},
+    "need": {"cote_r": 1.0, "log_revenu": -0.05, "heures_travail": 0.10, "premiere_generation": 0.0},
+    "legal": {"cote_r": 1.0, "log_revenu": 0.0, "heures_travail": 0.20, "premiere_generation": 0.0},
+    "data_process": {"cote_r": 1.0, "log_revenu": 0.19, "heures_travail": 0.19, "premiere_generation": 0.0},
+    "regional": {"cote_r": 1.0, "log_revenu": 0.0, "heures_travail": 0.15, "premiere_generation": 0.0}
+  },
+  "grant_rate": {"overall": [0.36, 0.44], "centre": [0.38, 0.43], "remote": [0.35, 0.42]},
+  "grant_rate_strict": {"overall": [0.38, 0.42], "centre": [0.42, 0.43], "remote": [0.36, 0.38]},
+  "limits": {
+    "max_eo_gap_vs_merit": 0.05,
+    "max_eo_overshoot_vs_merit": 0.09,
+    "max_eo_gap_vs_consensus": 0.06,
+    "max_dp_gap": 0.08,
+    "min_impact_ratio": 0.85,
+    "max_intersectional_gap": 0.10,
+    "min_mean_agreement_with_references": 0.93
+  },
+  "strict_limits": {
+    "max_eo_gap_vs_merit": 0.04,
+    "max_eo_overshoot_vs_merit": 0.07,
+    "max_eo_gap_vs_consensus": 0.03,
+    "max_dp_gap": 0.06,
+    "min_impact_ratio": 0.90,
+    "max_intersectional_gap": 0.08,
+    "min_mean_agreement_with_references": 0.96
+  },
+  "metric_definitions": {
+    "eo_gap_vs_merit": "TPR(centre) - TPR(remote) among candidates in top-1598 by R; enforced one-sided (remote disadvantage). Overshoot = TPR(remote) - TPR(centre), capped by max_eo_overshoot_vs_merit because hours credit legitimately makes it negative (consensus rule: -0.063).",
+    "eo_gap_vs_consensus": "abs(TPR(centre) - TPR(remote)) among positives of the consensus rule",
+    "dp_gap": "abs(rate_centre - rate_remote)",
+    "impact_ratio": "rate_remote / rate_centre",
+    "intersectional_gap": "max abs deviation from overall rate over cells remote x first_gen x income tercile (history terciles) with n >= 100",
+    "mean_agreement": "mean over the 5 reviewer reference decisions of the share of identical decisions on the 4000 candidates (proxy only)"
+  },
+  "guard_rules": [
+    "Overall grant rate in [0.36,0.44] (target 0.38-0.42); budget k=1598 gives 0.3995",
+    "Region-blind: no decision keyed on region, distance or postal code; swapping the region label alone changes no decision",
+    "Monotone in R: no applicant refused while a lower-R applicant (same programme, same region, same hours band) is granted",
+    "Remote vs centre grant-rate gap within each R band (decile/quintile/2-point bins, cells with enough applicants) <= 0.08 (strict 0.05)",
+    "Remote vs centre grant-rate gap |DP| <= 0.08 and impact ratio remote/centre >= 0.85",
+    "EO gap vs pure-R top-40% reference <= 0.05 in the disadvantage direction; remote overshoot <= 0.09",
+    "Intersectional cells (remote x first-gen x income tercile, n >= 100) within 0.10 of the overall rate (>= 0.8-0.85 x overall)",
+    "No positive weight on log income (no wealth premium); distance and postal code never in the score",
+    "Hours is a small linear credit (<= 0.2 sd), never a penalty and never a threshold cliff",
+    "Agreement with the pure-R top-40% decision >= 92%",
+    "Per-programme grant rate within 0.10 of the overall rate (reviewers: 0.05 and 0.15)"
+  ],
+  "guard_rules_minority": [
+    {"rule": "Per-region grant rate within [0.33,0.45] for each of the 5 regions; remote minus centre in [-0.06,+0.04]", "reviewers": ["regional"]},
+    {"rule": "TPR vs pure-R top-39.9% differs by <= 0.05 across the 5 regions", "reviewers": ["regional"]},
+    {"rule": "Shuffling region, distance, postal code changes < 1% of decisions", "reviewers": ["regional"]},
+    {"rule": "Mean R of granted remote applicants within 0.5 points of granted centre", "reviewers": ["merit"]},
+    {"rule": "At fixed R decile, grant rate must not rise with income quintile (spread <= 5 points)", "reviewers": ["need"]},
+    {"rule": "At same R and region, higher hours must not be granted less often", "reviewers": ["need"]},
+    {"rule": "Remote coefficient in a logistic of decision on merit terms within [-0.3,+0.3] logit", "reviewers": ["data_process"]},
+    {"rule": "Reject DP gap < 0.02 as over-correction", "reviewers": ["data_process"]},
+    {"rule": "No feature with |corr| > 0.5 to region unless justified", "reviewers": ["legal"]},
+    {"rule": "Governance: Loi 25 notice of automated decision, human-review path, input/output logging, quarterly subgroup audit", "reviewers": ["legal"]}
+  ],
+  "red_flags": [
+    "Remote grant rate below 0.33-0.34 or impact ratio below 0.83 (historical committee penalty retained; historical remote rate about 0.27)",
+    "Remote rate above centre by more than 0.03-0.06 or above 0.44 (over-correction beyond merit)",
+    "Positive weight on income (wealth premium)",
+    "Distance, postal code or region used directly or via lookalike encoding",
+    "Higher-R applicant refused while lower-R applicant granted (same programme/region) without logged reason",
+    "Hours or income used as a penalty",
+    "Region-specific thresholds, quotas or parity forcing so that remote applicants below the merit cutoff displace higher-R centre applicants"
+  ],
+  "red_flags_minority": [
+    {"flag": "Hours used as a threshold or cliff (e.g. above 10 h) rather than a small linear term", "reviewers": ["regional"]},
+    {"flag": "Training on decision_octroi without removing the regional penalty", "reviewers": ["regional"]},
+    {"flag": "Fairness measured only on a 2-group aggregate, hiding Cote-Nord / Gaspesie gaps", "reviewers": ["regional"]},
+    {"flag": "Overall rate at 36% or 44% edge by construction", "reviewers": ["data_process"]},
+    {"flag": "First-gen or programme used to move decisions", "reviewers": ["data_process"]},
+    {"flag": "First-generation status penalised", "reviewers": ["need"]},
+    {"flag": "No explanation or human-review path for refused applicants", "reviewers": ["legal"]},
+    {"flag": "First-gen cell gap above 10 points", "reviewers": ["legal"]}
+  ]
+}

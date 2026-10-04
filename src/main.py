@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import argparse
 import sys
 from pathlib import Path
@@ -66,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--history", type=Path, default=DEFAULT_HISTORY, metavar="CSV",
                          help="labeled historical CSV used as the baseline (default: supplied project data)")
     monitor.add_argument("--batch", type=Path, default=DEFAULT_CANDIDATES, metavar="CSV",
-                         help="applications that were scored (default: supplied evaluation data)")
+                         help="applications that were decided (default: supplied evaluation data)")
     monitor.add_argument("--decisions", type=Path, default=PROJECT_ROOT / "predictions.csv", metavar="CSV",
                          help="id_candidat,decision_octroi for the batch (default: predictions.csv)")
     monitor.add_argument("--reviewed", type=Path, metavar="CSV",
@@ -83,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="applications to decide (default: supplied evaluation data)")
     decide.add_argument("--out-dir", type=Path, default=PROJECT_ROOT, metavar="DIR",
                         help="where to write predictions.csv, decision_record.json, explanations.csv")
+    decide.add_argument("--residual-dir", type=Path, default=PROJECT_ROOT / "models/tabm_residual", metavar="DIR",
+                        help="TabM residual artefact (residuals.csv, manifest.json; default: models/tabm_residual)")
+    decide.add_argument("--config", metavar="NAME", help="named policy configuration (default: the declared configuration)")
     decide.add_argument("--json", action="store_true", help="write the decision record as JSON to stdout")
 
     for name, splits, help_text in [("pareto", 10, "evaluate every candidate and plot the Pareto front"),
@@ -179,12 +186,23 @@ def run_monitor(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
     return EXIT_ALERT if status == "ALERT" else 0
 
 
+def named_config(name: str | None):
+    from src.policy import CONFIGS, DECLARED_CONFIG
+
+    if name is None:
+        return DECLARED_CONFIG
+    if name not in CONFIGS:
+        raise InputError(f"unknown configuration {name!r}; choices: {', '.join(sorted(CONFIGS))}")
+    return CONFIGS[name]
+
+
 def run_decide(args: argparse.Namespace, run: RunContext, quiet: bool) -> int:
     from src.adapters import json_text
     from src.pipelines import run_decision
 
-    with run.stage("Deciding"):
-        artifacts = run_decision(args.history, args.batch, args.out_dir)
+    config = named_config(args.config)
+    with run.stage(f"Deciding ({config.name})"):
+        artifacts = run_decision(args.history, args.batch, args.out_dir, config=config, residual_dir=args.residual_dir)
     record, written = artifacts["record"], artifacts["written"]
     if args.json:
         print(json_text(record.summary()))

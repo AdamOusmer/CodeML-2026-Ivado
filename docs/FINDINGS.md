@@ -24,18 +24,18 @@ légitimement environ 7 points d'écart de taux (R seul : centre 42,8 % / éloig
 
 Le « mérite » est défini par **consensus** de cinq examinateurs indépendants (mérite, besoin, juridique, processus de
 données, équité régionale ; `docs/reviews/CONSENSUS.md`). Les **signes de légitimité sont déclarés par des humains**
-(R +, heures +, première génération 0) ; l'**amplitude des heures vient des données** (rapport heures/R = 0,1835, dérivé
-de l'ajustement du comité à chaque exécution, non réglé à la main).
+(R +, heures +, première génération 0) ; l'**amplitude des heures** est un choix déclaré, **0,185** en unités de cote R, retenu par essais et
+proche du rapport heures/R de l'ajustement du comité (0,1835, recalculé à chaque exécution et consigné dans le dossier de décision).
 
 Le revenu est le seul désaccord : mérite, juridique, régional 0 ; besoin −0,05 ; processus de données +0,19. Les données
-seules ne le tranchent pas. Le poids retenu, **+0,025 en unités de cote R**, et le mélange du résidu, **1**, sont des
-**choix de modélisation déclarés, retenus par essais, dans la plage de désaccord des examinateurs** (0 à +0,19). Ils
+seules ne le tranchent pas. Le poids retenu, **+0,025 en unités de cote R** (dans la plage de désaccord des examinateurs, 0 à +0,19), le poids des
+heures ci-dessus et le mélange du résidu, **1**, sont des **choix de modélisation déclarés, retenus par essais**. Ils
 sont définis chacun en un seul endroit de `src/policy`.
 
 ## 3. Correction
 
 1. **Diagnostic** : le modèle du comité reste ajusté pour estimer la pénalité et le rapport heures/R ; il n'est pas la cible.
-2. **Base** : règle de consensus `z(R) + 0,1835 × z(heures) + 0,025 × z(log revenu)` en unités de cote R ; les étiquettes
+2. **Base** : règle de consensus `z(R) + 0,185 × z(heures) + 0,025 × z(log revenu)` en unités de cote R ; les étiquettes
    d'entraînement sont les k meilleurs sur l'historique (k = round(part × n), part = 39,94 % lue dans les données).
 3. **Résidu TabM** : un TabM borné (entrées : cote R et heures seulement) est appris sur l'historique hors machine
    (`kaggle/train.py`, 5 plis × 3 graines, pénalité choisie par la perte logarithmique hors échantillon) et livré comme

@@ -85,17 +85,17 @@ print(f"\\nPénalité explicite : {committee.remote_penalty_:.2f} logit. Le reve
 
 Cinq examinateurs indépendants (mérite, besoin, juridique, processus de données, équité régionale ; `docs/reviews/`) ont proposé chacun une règle de référence. Le consensus (`docs/reviews/CONSENSUS.md`) : cote R d'abord, heures en petit crédit, première génération 0 ; **égalité des chances, pas parité des taux**.
 
-Le revenu est le seul point de désaccord : mérite, juridique et régional lui donnent 0, besoin −0,05, processus de données +0,19. Le poids retenu, **+0,025 (en unités de cote R)**, est un **choix de modélisation déclaré, retenu par essais, dans la plage de désaccord des examinateurs** (−0,05 à +0,19). L'amplitude des heures n'est pas choisie : elle est dérivée de l'ajustement du comité à chaque exécution."""),
+Le revenu est le seul point de désaccord : mérite, juridique et régional lui donnent 0, besoin −0,05, processus de données +0,19. Le poids retenu, **+0,025 (en unités de cote R)**, est un **choix de modélisation déclaré, retenu par essais, dans la plage de désaccord des examinateurs** (−0,05 à +0,19). Le poids des heures, **0,185**, est lui aussi un choix de modélisation déclaré, retenu par essais, proche du rapport heures / R de l'ajustement du comité (calculé à chaque exécution)."""),
     ("code", """weights = pd.DataFrame(reference_weights(committee)).loc[['cote_r', 'heures_travail', 'log_revenu', 'premiere_generation']]
 print("Poids des règles de référence (R = 1) :")
 print(weights.round(4).to_string())
-print(f"\\nRapport heures / R (dérivé de l'historique) : {weights.loc['heures_travail', 'consensus']:.4f}")
+print(f"\\nPoids déclaré des heures : {weights.loc['heures_travail', 'consensus']:.4f} ; rapport heures / R du comité : {committee.hours_over_r():.4f}")
 print(f"Poids déclaré du revenu : {DECLARED_INCOME_WEIGHT} ; plage des examinateurs : {min(REVIEWER_INCOME_WEIGHTS.values())} à {max(REVIEWER_INCOME_WEIGHTS.values())}")"""),
     ("markdown", """## (c) Chaîne de correction et décision finale
 
 ```
 historique (10 000) -> validation -> modèle du comité (diagnostic : pénalité, IC, rapport heures / R)
-   -> base = règle de consensus : R + (heures/R dérivé) x heures + 0,025 x log revenu  (unités de cote R)
+   -> base = règle de consensus : R + 0,185 x heures + 0,025 x log revenu  (unités de cote R)
    -> résidu TabM appris sur l'historique (Kaggle), artefact vérifié par SHA-256 ; mélange déclaré = 1
    -> score = base + résidu ; les k meilleurs candidats (k = part historique x n)
    -> jury (panel des cinq règles) et raisonnement en MODE AUDIT : votes, traces, contradictions enregistrés, aucun échange

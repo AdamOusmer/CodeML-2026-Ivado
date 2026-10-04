@@ -81,16 +81,16 @@
         },
         {
           "name": "opportunity gap vs merit reference",
-          "value": -0.06491140609553103,
+          "value": -0.06589662777040783,
           "threshold": "ok in [-0.0882, 0.0378], alert outside [-0.09, 0.05]",
           "status": "OK",
-          "detail": "deserving = top R scores at the same budget; centre minus remote -0.0649, absolute 0.0649",
+          "detail": "deserving = top R scores at the same budget; centre minus remote -0.0659, absolute 0.0659",
           "correctable": true,
-          "excess": -0.025088593904468964
+          "excess": -0.024103372229592163
         },
         {
           "name": "opportunity gap vs corrected committee",
-          "value": 0.04601930812281396,
+          "value": 0.04702030912381505,
           "threshold": "warn > 0.03",
           "status": "WARN",
           "detail": "deserving = committee rule without regional penalty",
@@ -99,7 +99,7 @@
         },
         {
           "name": "largest intersectional gap (centre vs remote)",
-          "value": 0.02130987292277614,
+          "value": 0.020332355816226777,
           "threshold": "warn > 0.15",
           "status": "OK",
           "detail": "income tercile 3",
@@ -158,13 +158,13 @@
   "training_labels": {
     "target": "consensus",
     "grants": 3994,
-    "differs_from_committee": 1490,
-    "differs_from_corrected": 534,
+    "differs_from_committee": 1494,
+    "differs_from_corrected": 532,
     "reference_weights": {
       "consensus": {
         "cote_r": 1.0,
         "log_revenu": 0.025,
-        "heures_travail": 0.1835056378191949,
+        "heures_travail": 0.185,
         "premiere_generation": 0.0,
         "prog_Genie": 0.0,
         "prog_Sante": 0.0,
@@ -222,15 +222,16 @@
         "prog_Sciences sociales": 0.0
       }
     },
+    "committee_hours_over_r": 0.1835056378191949,
     "learned_ratios": {
-      "hours_over_r": 0.1875215580115167,
-      "income_over_r": 0.025563941625751565
+      "hours_over_r": 0.18905303811797167,
+      "income_over_r": 0.025561693395298384
     }
   },
   "jury": {
     "triggered": 200,
-    "overturned_out": 14,
-    "overturned_in": 14,
+    "overturned_out": 13,
+    "overturned_in": 13,
     "applied": false,
     "reasons": {
       "near_cutoff": 200,
@@ -269,30 +270,30 @@
       },
       {
         "name": "strong: worst programme / first-generation subgroup gap",
-        "value": 0.03867772885654097,
+        "value": 0.03865182436611009,
         "threshold": "<= consensus rule 0.0395 + 0.01",
         "status": "OK",
         "detail": "",
         "correctable": false,
-        "excess": -0.010798714070346764
+        "excess": -0.010824618560777648
       },
       {
         "name": "strong: five-region merit gap",
-        "value": 0.07904761904761903,
+        "value": 0.08190476190476192,
         "threshold": "<= consensus rule 0.0864 + 0.01",
         "status": "OK",
         "detail": "",
         "correctable": false,
-        "excess": -0.017348618459729556
+        "excess": -0.014491475602586665
       },
       {
         "name": "strong: worst reference gap beyond the consensus rule",
-        "value": 0.004716851775675379,
+        "value": 0.005786370492252835,
         "threshold": "<= 0.01",
         "status": "OK",
         "detail": "need",
         "correctable": false,
-        "excess": -0.005283148224324621
+        "excess": -0.0042136295077471655
       },
       {
         "name": "strong: income cost share of the removed penalty",
@@ -328,7 +329,7 @@
       },
       {
         "name": "juror agreement: split share of triggered cases",
-        "value": 0.78,
+        "value": 0.775,
         "threshold": "warn > 0.5",
         "status": "WARN",
         "detail": "200 triggered cases",
@@ -369,21 +370,21 @@
       },
       {
         "name": "consensus: opportunity gap vs merit (remote disadvantage)",
-        "value": -0.06491140609553103,
+        "value": -0.06589662777040783,
         "threshold": "warn > 0.0378, alert > 0.05",
         "status": "OK",
-        "detail": "TPR centre minus remote -0.0649 among pure-R top-k; strict 0.04 met",
+        "detail": "TPR centre minus remote -0.0659 among pure-R top-k; strict 0.04 met",
         "correctable": true,
-        "excess": -0.11491140609553104
+        "excess": -0.11589662777040784
       },
       {
         "name": "consensus: opportunity overshoot vs merit (remote advantage)",
-        "value": 0.06491140609553103,
+        "value": 0.06589662777040783,
         "threshold": "warn > 0.0882, alert > 0.09",
         "status": "OK",
-        "detail": "TPR centre minus remote -0.0649 among pure-R top-k; strict 0.07 met",
+        "detail": "TPR centre minus remote -0.0659 among pure-R top-k; strict 0.07 met",
         "correctable": true,
-        "excess": -0.025088593904468964
+        "excess": -0.024103372229592163
       },
       {
         "name": "consensus: demographic parity gap",
@@ -414,30 +415,30 @@
       },
       {
         "name": "consensus: mean agreement with reviewer rules",
-        "value": 0.9803000000000001,
+        "value": 0.9806000000000001,
         "threshold": "warn < 0.9350, alert < 0.93",
         "status": "OK",
-        "detail": "merit 0.993 need 0.977 legal 0.993 data_process 0.946 regional 0.993; strict 0.96 met",
+        "detail": "merit 0.994 need 0.978 legal 0.994 data_process 0.945 regional 0.994; strict 0.96 met",
         "correctable": false,
-        "excess": -0.05030000000000001
+        "excess": -0.05060000000000009
       },
       {
         "name": "consensus: min agreement with reviewer rules",
-        "value": 0.9455,
+        "value": 0.945,
         "threshold": "warn < 0.92, alert < 0.9",
         "status": "OK",
         "detail": "lowest data_process",
         "correctable": false,
-        "excess": -0.045499999999999985
+        "excess": -0.04499999999999993
       },
       {
         "name": "consensus: opportunity gap vs consensus rule",
-        "value": 0.0011057054400707145,
+        "value": 0.0021561256081379376,
         "threshold": "warn > 0.0540, alert > 0.06",
         "status": "OK",
         "detail": "strict 0.03 met",
         "correctable": true,
-        "excess": -0.05889429455992928
+        "excess": -0.05784387439186206
       },
       {
         "name": "consensus: hours shape, largest jump between adjacent 2-hour windows",

@@ -48,7 +48,8 @@ def training_report(pipeline, history, batch) -> dict:
     report = {"target": config.target, "grants": int(labels.sum()),
               "differs_from_committee": int((labels != historical).sum()),
               "differs_from_corrected": int((labels != pipeline.label_correction_.labels).sum()),
-              "reference_weights": reference_weights(pipeline.committee_)}
+              "reference_weights": reference_weights(pipeline.committee_),
+              "committee_hours_over_r": pipeline.committee_.hours_over_r()}
     if config.strong_guard:
         report["learned_ratios"] = pipeline.learned_ratios(batch)
     return report

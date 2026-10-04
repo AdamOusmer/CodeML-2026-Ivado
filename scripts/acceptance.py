@@ -1433,20 +1433,20 @@ def check_revert_refits_offset(ctx) -> str:
 
 
 def check_consensus_target_labels(ctx) -> str:
-    from src.policy import (COMMITTEE_FEATURES, CONSENSUS_PANEL_CONFIG, DECLARED_INCOME_WEIGHT, FairPipeline,
-                            budget_share)
+    from src.policy import (COMMITTEE_FEATURES, CONSENSUS_PANEL_CONFIG, DECLARED_HOURS_WEIGHT, DECLARED_INCOME_WEIGHT,
+                            FairPipeline, budget_share)
 
     history = ctx["history"]
     share = budget_share(history)
     pipeline = FairPipeline(CONSENSUS_PANEL_CONFIG, share).fit(history)
     committee = pipeline.committee_
-    score = committee.rule_score(history, DECLARED_INCOME_WEIGHT)
+    score = committee.rule_score(history, DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
     k = int(round(share * len(history)))
     expected = np.zeros(len(history), dtype=int)
     expected[np.argsort(-score, kind="stable")[:k]] = 1
     labels = pipeline.training_labels_
     assert np.array_equal(labels, expected) and int(labels.sum()) == k, "labels are not the top-k consensus scores"
-    weights = committee.rule_weights(DECLARED_INCOME_WEIGHT)
+    weights = committee.rule_weights(DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
     names = [name for name, weight in zip(COMMITTEE_FEATURES, weights) if weight != 0]
     assert names == ["cote_r", "log_revenu", "heures_travail"] and (weights >= 0).all(), f"weighted criteria {names}"
     assert weights[COMMITTEE_FEATURES.index("cote_r")] == 1.0, "rule not expressed in R units"
@@ -1603,8 +1603,8 @@ def committee_of(ctx):
 
 def check_consensus_constants(ctx) -> str:
     from src.monitoring import EO_GAP_ALERT
-    from src.policy import (GRANT_RATE_BANDS, GRANT_RATE_STRICT_BANDS, LIMITS, REVIEWER_INCOME_WEIGHTS, STRICT_LIMITS,
-                            reference_weights)
+    from src.policy import (DECLARED_HOURS_WEIGHT, GRANT_RATE_BANDS, GRANT_RATE_STRICT_BANDS, LIMITS,
+                            REVIEWER_INCOME_WEIGHTS, STRICT_LIMITS, reference_weights)
 
     expected = json.loads(CONSENSUS_JSON.read_text())
 
@@ -1625,9 +1625,14 @@ def check_consensus_constants(ctx) -> str:
     weights = reference_weights(committee_of(ctx))
     ratios = {name: {criterion: round(float(value), 4) for criterion, value in rule.items() if value != 0}
               for name, rule in weights.items()}
-    assert 0.1 < weights["consensus"]["heures_travail"] < 0.3, f"hours/R {weights['consensus']['heures_travail']}"
+    declared_hours = weights["consensus"]["heures_travail"]
+    derived_hours = committee_of(ctx).hours_over_r()
+    assert declared_hours == DECLARED_HOURS_WEIGHT, f"declared hours weight not used: {declared_hours}"
+    assert abs(declared_hours - derived_hours) <= 0.1 * derived_hours, \
+        f"declared hours {declared_hours} outside +-10% of committee hours/R {derived_hours:.4f}"
     ctx["derived_weights"] = ratios
-    return f"reviewer income weights and limits equal consensus.json; derived weights (R=1) {ratios}"
+    return (f"reviewer income weights and limits equal consensus.json; declared hours {declared_hours} within 10% of "
+            f"committee hours/R {derived_hours:.4f}; weights (R=1) {ratios}")
 
 
 def check_consensus_guard_declared(ctx) -> str:

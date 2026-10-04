@@ -9,8 +9,8 @@ from .jury import JurySettings, JuryOutcome, validate
 from .label_correction import CommitteeModel, correct_labels, effective_removal
 from .main_models import contributions, fit_main_model, logit
 from .reasoning import ReasoningSettings, deliberate
-from .references import (DECLARED_INCOME_WEIGHT, REFERENCE_JURORS, REVIEWER_NAMES, consensus_labels, reference_decisions,
-                         reference_scores)
+from .references import (DECLARED_HOURS_WEIGHT, DECLARED_INCOME_WEIGHT, REFERENCE_JURORS, REVIEWER_NAMES,
+                         consensus_labels, reference_decisions, reference_scores)
 from .regions import is_remote
 from .schema import COMMITTEE_FEATURES, SCORING_FEATURES, committee_features, feature_frame
 
@@ -100,7 +100,7 @@ class FairPipeline:
         return feature_frame(df, self.config.features)
 
     def base_score(self, df):
-        return self.committee_.rule_score(df, DECLARED_INCOME_WEIGHT)
+        return self.committee_.rule_score(df, DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
 
     def declared_score(self, df):
         residual = self.residual.reindex(df["id_candidat"]).to_numpy(dtype=float)
@@ -184,7 +184,7 @@ class FairPipeline:
         if self.config.residual_blend is None:
             return contributions(self.main_model_, self.features(df))
         terms = self.committee_.scaler_.transform(committee_features(df)) * self.committee_.rule_weights(
-            DECLARED_INCOME_WEIGHT)
+            DECLARED_INCOME_WEIGHT, DECLARED_HOURS_WEIGHT)
         frame = pd.DataFrame(terms, columns=COMMITTEE_FEATURES, index=df.index)[SCORING_FEATURES]
         frame[RESIDUAL_COLUMN] = self.declared_score(df) - self.base_score(df)
         return frame

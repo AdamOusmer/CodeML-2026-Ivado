@@ -8,8 +8,9 @@ des 10 000 demandes.
 La décision est le top k (k = taux historique de 39,94 %, lu dans les données) du score `base + résidu` :
 
 - **base** : règle de consensus des cinq examinateurs, en unités de cote R : cote R, un crédit linéaire pour les heures
-  (rapport heures/R = 0,1835, dérivé de l'historique à chaque exécution) et un petit poids du revenu (+0,025, choix de
-  modélisation déclaré, retenu par essais, dans la plage de désaccord des examinateurs de 0 à +0,19) ;
+  (poids des heures 0,185, choix de modélisation déclaré, retenu par essais, proche du rapport heures/R de 0,1835 que
+  l'ajustement du comité donne à chaque exécution) et un petit poids du revenu (+0,025, choix de modélisation déclaré,
+  retenu par essais, dans la plage de désaccord des examinateurs de 0 à +0,19) ;
 - **résidu** : un TabM borné appris sur l'historique (`kaggle/train.py`), livré comme artefact vérifié par SHA-256
   (`models/tabm_residual/`), mélangé à 1 (choix déclaré) ;
 - **jury et raisonnement en mode audit** : le panel des cinq règles vote et les décisions sont tracées, sans échange ;

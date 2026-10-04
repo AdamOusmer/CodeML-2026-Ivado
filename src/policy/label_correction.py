@@ -33,14 +33,17 @@ class CommitteeModel:
         base = Z @ (self.lr_.coef_[0][:-1] * kept) + self.lr_.intercept_[0]
         return base + (1.0 - removal) * self.remote_penalty_ * is_remote(df)
 
-    def rule_weights(self, income_weight):
+    def hours_over_r(self):
         coefficients = dict(zip(COMMITTEE_FEATURES, np.abs(self.lr_.coef_[0][:-1])))
-        weights = {"cote_r": 1.0, "heures_travail": coefficients["heures_travail"] / coefficients["cote_r"],
+        return float(coefficients["heures_travail"] / coefficients["cote_r"])
+
+    def rule_weights(self, income_weight, hours_weight=None):
+        weights = {"cote_r": 1.0, "heures_travail": self.hours_over_r() if hours_weight is None else hours_weight,
                    "log_revenu": income_weight}
         return np.array([weights.get(name, 0.0) for name in COMMITTEE_FEATURES])
 
-    def rule_score(self, df, income_weight):
-        return self.scaler_.transform(committee_features(df)) @ self.rule_weights(income_weight)
+    def rule_score(self, df, income_weight, hours_weight=None):
+        return self.scaler_.transform(committee_features(df)) @ self.rule_weights(income_weight, hours_weight)
 
 
 @dataclass(frozen=True)

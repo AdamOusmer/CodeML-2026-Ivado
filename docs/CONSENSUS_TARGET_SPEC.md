@@ -17,12 +17,14 @@ Décidé après cinq revues d'équité indépendantes (`docs/reviews/CONSENSUS.m
   dans l'historique) de la règle de consensus sur l'historique, standardisée par la moyenne et l'écart-type de
   l'historique. Le modèle du comité reste ajusté pour le diagnostic (pénalité, IC, test des pentes).
 - La règle est exprimée en unités de cote R : `z(R) + h × z(heures) + w × z(log revenu)`.
-  - `h` = |coefficient heures| / |coefficient R| du comité : **dérivé de l'historique à chaque exécution** (≈ 0,1835).
+  - `h` = `DECLARED_HOURS_WEIGHT` = 0,185 : **choix de modélisation déclaré, retenu par essais**, proche du rapport
+    |coefficient heures| / |coefficient R| du comité (≈ 0,1835), qui reste calculé à chaque exécution pour le diagnostic
+    (« heures/R du comité » dans `decision_record.json`). Défini dans `src/policy/references.py`.
   - `w` = `DECLARED_INCOME_WEIGHT` = +0,025 : **choix de modélisation déclaré, retenu par essais, dans la plage de
     désaccord des examinateurs** (0 à +0,19 ; besoin −0,05). Défini à un seul endroit, `src/policy/references.py`.
-- Règles de référence (`src/policy/references.py`) : `consensus` (revenu +0,025), et les cinq examinateurs avec leur
+- Règles de référence (`src/policy/references.py`) : `consensus` (heures 0,185, revenu +0,025), et les cinq examinateurs avec leur
   propre poids du revenu lu dans `docs/reviews/consensus.json` (mérite 0, besoin −0,05, juridique 0, processus de données
-  +0,19, régional 0), heures dérivées comme ci-dessus.
+  +0,19, régional 0), heures dérivées du comité.
 
 ## 3. Jury en panel
 

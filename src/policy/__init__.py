@@ -4,7 +4,7 @@ _EXPORTS = {
     "regions": ("REGIONS", "REMOTE_REGIONS", "is_remote"),
     "core": ("BUDGET_BOUNDS", "budget_share", "allocate", "percentile", "logistic_regression", "eo_gap",
              "signed_eo_gap", "production_features", "auc"),
-    "references": ("DECLARED_INCOME_WEIGHT", "REVIEWER_INCOME_WEIGHTS", "REFERENCE_INCOME_WEIGHTS", "REVIEWER_NAMES",
+    "references": ("DECLARED_INCOME_WEIGHT", "DECLARED_HOURS_WEIGHT", "REFERENCE_HOURS_WEIGHTS", "REVIEWER_INCOME_WEIGHTS", "REFERENCE_INCOME_WEIGHTS", "REVIEWER_NAMES",
                    "REFERENCE_JURORS", "reference_scores", "reference_decisions", "consensus_labels",
                    "reference_weights"),
     "thresholds": ("LIMITS", "STRICT_LIMITS", "GRANT_RATE_BANDS", "GRANT_RATE_STRICT_BANDS", "WARN_FRACTION",

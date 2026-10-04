@@ -19,11 +19,12 @@ direct (I8).
 
 Aucune valeur de la chaîne ne provient d'un score externe ni d'une expérience qui en dépend. Les entrées sont les deux CSV fournis. Les constantes déclarées sont de deux sortes :
 
-- **dérivées des données à chaque exécution** : le rapport heures / cote R (≈ 0,1835), la pénalité régionale, la part
-  d'octrois ;
+- **dérivées des données à chaque exécution** : la pénalité régionale, la part d'octrois et, pour le diagnostic, le
+  rapport heures / cote R du comité (≈ 0,1835) ;
 - **choix de modélisation déclarés, retenus par essais, dans la plage de désaccord des examinateurs** (0 à +0,19 pour le
-  revenu) : le poids du revenu (`DECLARED_INCOME_WEIGHT` = +0,025, en unités de cote R) et le mélange du résidu
-  (`DECLARED_RESIDUAL_BLEND` = 1). Ces deux constantes sont dans `src/policy`, en un seul endroit chacune.
+  revenu) : le poids des heures (`DECLARED_HOURS_WEIGHT` = 0,185, proche du 0,1835 du comité), le poids du revenu
+  (`DECLARED_INCOME_WEIGHT` = +0,025, en unités de cote R) et le mélange du résidu (`DECLARED_RESIDUAL_BLEND` = 1).
+  Ces constantes sont dans `src/policy`, en un seul endroit chacune.
 
 Les poids du revenu des cinq examinateurs (`REVIEWER_INCOME_WEIGHTS` : mérite 0, besoin −0,05, juridique 0, processus de
 données +0,19, régional 0) sont lus dans `docs/reviews/consensus.json` ; un contrôle d'acceptation les compare au fichier.
@@ -35,7 +36,7 @@ données +0,19, régional 0) sont lus dans `docs/reviews/consensus.json` ; un co
 2. **Comité (diagnostic)** : `CommitteeModel` ajusté sur l'historique (8 critères + indicateur « éloigné »). Il donne la
    pénalité, son IC et le rapport heures / cote R. `Config.target = "consensus"` : les étiquettes d'entraînement sont les
    `k` meilleurs de la règle de consensus sur l'historique (`k = round(part × n)`).
-3. **Base** : score de consensus en unités de cote R, `z(R) + (heures/R dérivé) × z(heures) + 0,025 × z(log revenu)`,
+3. **Base** : score de consensus en unités de cote R, `z(R) + 0,185 × z(heures) + 0,025 × z(log revenu)`,
    normalisé par la moyenne et l'écart-type de l'historique. Une régression logistique à une variable, ajustée sur ce
    score et les étiquettes de consensus, ne sert qu'à exprimer le score en probabilité (déclencheur `low_confidence`,
    jurés, explications).

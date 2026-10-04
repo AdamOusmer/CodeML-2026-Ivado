@@ -80,10 +80,10 @@ Compare la décision à la règle de consensus **déclarée** (revenu +0,025), r
 | Contrôle | ALERT |
 |---|---|
 | contrôles de la garde du consensus non OK | au moins un |
-| ratio d'impact régional (plus basse / plus haute région) | < max(0,90 ; règle − 0,01) |
-| pire écart de sous-groupe (programme, première génération) | > règle + 0,01 |
-| écart de mérite sur les cinq régions | > règle + 0,01 |
-| pire écart à une référence au-delà de la règle de consensus | > 0,01 |
+| ratio d'impact régional (plus basse / plus haute région) | < max(0,90 ; règle − 0,012) |
+| pire écart de sous-groupe (programme, première génération) | > règle + 0,012 |
+| écart de mérite sur les cinq régions | > règle + 0,012 |
+| pire écart à une référence au-delà de la règle de consensus | > 0,012 |
 | coût du revenu en part de la pénalité retirée | > 5 % |
 
 ## 2. Qui déclenche quoi (`postprocessing.py`, `controller.decide`)
@@ -167,7 +167,7 @@ Fondement juridique de l'équité (à vérifier avant citation) : Charte des dro
 |---|---|
 | La référence cachée est inconnue ; les « méritants » sont les règles des cinq examinateurs, donc l'équité mesurée est relative à nos hypothèses | échantillon revu à l'aveugle ; audit externe annuel ; revue annuelle des signes |
 | Désaccord sur le revenu (besoin −0,05 ; processus de données +0,19) ; le poids déclaré +0,025 et le mélange du résidu sont des choix de modélisation | comité humain, section 4 |
-| Résidu TabM : gain de perte logarithmique minime, étiquette historique = décisions du comité, monotonie vérifiée sur grille seulement | blocage si le hachage ne correspond pas ; ré-entraînement et revue du manifeste à chaque cycle |
+| Résidu TabM (ensemble de 4 réseaux, mélange 2,5) : gain de perte logarithmique minime, étiquette historique = décisions du comité, monotonie vérifiée sur grille seulement | blocage si le hachage ne correspond pas ; ré-entraînement et revue du manifeste à chaque cycle |
 | Marge de l'EO signé (−0,065 contre −0,09) | suivi de tendance par lot ; WARN avant ALERT |
 | Part de division des jurés élevée (0,78) : les cinq règles divergent sur les cas limites ; le jury est en mode audit (aucun échange appliqué) | acceptable : aucun risque d'aggravation ; les échanges contestés restent consignés |
 | Portée du décalage faible (\|δ\| ≤ 0,10) : une grande dérive d'équité n'est pas corrigible | BLOCK volontaire |

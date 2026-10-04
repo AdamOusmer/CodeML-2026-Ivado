@@ -16,7 +16,10 @@ from .schema import COMMITTEE_FEATURES, SCORING_FEATURES, committee_features, fe
 
 TARGETS = ("corrected", "consensus")
 RATIO_STEP = 0.5
-DECLARED_RESIDUAL_BLEND = 1.0
+DECLARED_RESIDUAL_BLEND = 2.5
+SINGLE_RESIDUAL_BLEND = 1.0
+SINGLE_RESIDUAL_ARTEFACT = "tabm_residual"
+ENSEMBLE_RESIDUAL_ARTEFACT = "tabm_residual_ensemble_rh"
 RESIDUAL_COLUMN = "residual_rsd"
 
 
@@ -31,6 +34,7 @@ class Config:
     reasoning: ReasoningSettings | None = None
     strong_guard: bool = False
     residual_blend: float | None = None
+    residual_artefact: str = SINGLE_RESIDUAL_ARTEFACT
 
     def __post_init__(self):
         if self.target not in TARGETS:
@@ -53,11 +57,14 @@ CONSENSUS_PANEL_CONFIG = Config("consensus panel", target="consensus", jury=Jury
 AUDIT_PANEL_CONFIG = replace(CONSENSUS_PANEL_CONFIG, name="consensus panel, audit mode",
                              jury=replace(CONSENSUS_PANEL_CONFIG.jury, audit_only=True),
                              reasoning=ReasoningSettings(), strong_guard=True)
-DECLARED_CONFIG = replace(AUDIT_PANEL_CONFIG, name="declared: base + TabM residual",
-                          residual_blend=DECLARED_RESIDUAL_BLEND)
+SINGLE_RESIDUAL_CONFIG = replace(AUDIT_PANEL_CONFIG, name="declared: base + TabM residual",
+                                 residual_blend=SINGLE_RESIDUAL_BLEND)
+DECLARED_CONFIG = replace(AUDIT_PANEL_CONFIG, name="declared: base + TabM ensemble residual",
+                          residual_blend=DECLARED_RESIDUAL_BLEND, residual_artefact=ENSEMBLE_RESIDUAL_ARTEFACT)
 CONFIGS = {config.name: config for config in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG, INCOME_BLIND_NO_JURY_CONFIG,
                                                MODEL_JURY_CONFIG,
-                                               CONSENSUS_PANEL_CONFIG, AUDIT_PANEL_CONFIG, DECLARED_CONFIG)}
+                                               CONSENSUS_PANEL_CONFIG, AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG,
+                                               DECLARED_CONFIG)}
 
 OFFSET_BOUND = 0.10
 

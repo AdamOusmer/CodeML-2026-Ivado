@@ -96,7 +96,7 @@ print(f"Poids déclaré du revenu : {DECLARED_INCOME_WEIGHT} ; plage des examina
 ```
 historique (10 000) -> validation -> modèle du comité (diagnostic : pénalité, IC, rapport heures / R)
    -> base = règle de consensus : R + 0,185 x heures + 0,025 x log revenu  (unités de cote R)
-   -> résidu TabM appris sur l'historique (Kaggle), artefact vérifié par SHA-256 ; mélange déclaré = 1
+   -> résidu TabM appris sur l'historique (Kaggle), artefact vérifié par SHA-256 ; ensemble de 4 TabM, mélange déclaré = 2,5
    -> score = base + résidu ; les k meilleurs candidats (k = part historique x n)
    -> jury (panel des cinq règles) et raisonnement en MODE AUDIT : votes, traces, contradictions enregistrés, aucun échange
    -> audit : surveillance + garde du jury + garde du consensus + garde forte
@@ -156,8 +156,8 @@ for _, r in rejected.iterrows():
     ("markdown", """## (g) Limites
 
 - **Référence cachée inconnue.** Les « méritants » sont des hypothèses issues des examens ; l'accord avec les cinq règles est un substitut, non une mesure.
-- **Désaccord sur le revenu.** Mérite, juridique, régional : 0 ; besoin : −0,05 ; processus de données : +0,19. Le poids déclaré (+0,025) et le mélange du résidu (1) sont des choix de modélisation déclarés, retenus par essais, à faire valider par un comité humain.
-- **Le résidu TabM améliore la perte logarithmique historique de façon minime** (voir `models/tabm_residual/manifest.json`) : l'étiquette historique mesure les décisions du comité, pas le mérite.
+- **Désaccord sur le revenu.** Mérite, juridique, régional : 0 ; besoin : −0,05 ; processus de données : +0,19. Le poids déclaré (+0,025) et le mélange du résidu (2,5) sont des choix de modélisation déclarés, retenus par essais, à faire valider par un comité humain.
+- **Le résidu TabM améliore la perte logarithmique historique de façon minime** (voir `models/tabm_residual_ensemble_rh/manifest.json`) : l'étiquette historique mesure les décisions du comité, pas le mérite.
 - **Données synthétiques** ; pénalité estimée sur l'historique, à ré-estimer à chaque cycle ; le modèle du comité est logistique, pas le comité réel.
 - Fondements juridiques (Charte québécoise art. 10, 86 ; Loi 25 art. 12.1) à vérifier avant citation."""),
     ("code", """print(f"Durée totale : {time.time() - T0:.0f} s")"""),

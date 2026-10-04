@@ -11,8 +11,8 @@ La décision est le top k (k = taux historique de 39,94 %, lu dans les données)
   (poids des heures 0,185, choix de modélisation déclaré, retenu par essais, proche du rapport heures/R de 0,1835 que
   l'ajustement du comité donne à chaque exécution) et un petit poids du revenu (+0,025, choix de modélisation déclaré,
   retenu par essais, dans la plage de désaccord des examinateurs de 0 à +0,19) ;
-- **résidu** : un TabM borné appris sur l'historique (`kaggle/train.py`), livré comme artefact vérifié par SHA-256
-  (`models/tabm_residual/`), mélangé à 1 (choix déclaré) ;
+- **résidu** : un ensemble de 4 réseaux TabM bornés (entrées R et heures) appris sur l'historique, livré comme artefact
+  vérifié par SHA-256 (`models/tabm_residual_ensemble_rh/`), mélangé à 2,5 (mélange déclaré, retenu par essais) ;
 - **jury et raisonnement en mode audit** : le panel des cinq règles vote et les décisions sont tracées, sans échange ;
 - un harnais automatisé audite le résultat (surveillance, garde du jury, garde du consensus, garde forte), applique au
   plus un décalage borné (|δ| ≤ 0,10) ou bloque la publication.
@@ -41,7 +41,7 @@ standard caché des juges. Voir `docs/FINDINGS.md` pour le diagnostic, les limit
 - `audit_rapport.ipynb` (généré par `scripts/build_audit_report.py`)
 - `model_corrige.py` + `pareto_front.png`
 - `docs/MONITORING_PLAN.md`
-- `models/tabm_residual/` et `kaggle/` (entraînement du résidu)
+- `models/tabm_residual_ensemble_rh/`, `models/tabm_residual/` et `kaggle/` (entraînement du résidu)
 
 ### Démarrage rapide
 
@@ -62,7 +62,7 @@ python3 -m venv venv && source venv/bin/activate && pip install -r requirements.
 ```
 
 `data/` doit contenir les deux CSV fournis avant de lancer quoi que ce soit. La configuration déclarée lit
-`models/tabm_residual/` et échoue clairement si l'artefact manque ou ne correspond pas aux données.
+`models/tabm_residual_ensemble_rh/` et échoue clairement si l'artefact manque ou ne correspond pas aux données.
 
 Entraînement du résidu (GPU Kaggle gratuit) : `uv run python kaggle/build_notebook.py` génère un carnet qui exécute
 `kaggle/train.py` avec les deux CSV pour seules entrées ; copier `residuals.csv` et `manifest.json` dans

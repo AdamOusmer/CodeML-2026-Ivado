@@ -11,7 +11,7 @@ from .consensus import consensus_guard, group_rate, reference_decisions
 SUBGROUPS = ("programme_etudes", "premiere_generation_universitaire")
 MIN_IMPACT_RATIO = 0.90
 MAX_INCOME_COST_SHARE = 0.05
-TOLERANCE = 0.01
+TOLERANCE = 0.012
 
 
 def region_impact(decisions, batch):

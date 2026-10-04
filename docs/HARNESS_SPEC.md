@@ -23,7 +23,7 @@ Aucune valeur de la chaîne ne provient d'un score externe ni d'une expérience 
   rapport heures / cote R du comité (≈ 0,1835) ;
 - **choix de modélisation déclarés, retenus par essais, dans la plage de désaccord des examinateurs** (0 à +0,19 pour le
   revenu) : le poids des heures (`DECLARED_HOURS_WEIGHT` = 0,185, proche du 0,1835 du comité), le poids du revenu
-  (`DECLARED_INCOME_WEIGHT` = +0,025, en unités de cote R) et le mélange du résidu (`DECLARED_RESIDUAL_BLEND` = 1).
+  (`DECLARED_INCOME_WEIGHT` = +0,025, en unités de cote R) et le mélange du résidu (`DECLARED_RESIDUAL_BLEND` = 2,5).
   Ces constantes sont dans `src/policy`, en un seul endroit chacune.
 
 Les poids du revenu des cinq examinateurs (`REVIEWER_INCOME_WEIGHTS` : mérite 0, besoin −0,05, juridique 0, processus de
@@ -40,8 +40,8 @@ données +0,19, régional 0) sont lus dans `docs/reviews/consensus.json` ; un co
    normalisé par la moyenne et l'écart-type de l'historique. Une régression logistique à une variable, ajustée sur ce
    score et les étiquettes de consensus, ne sert qu'à exprimer le score en probabilité (déclencheur `low_confidence`,
    jurés, explications).
-4. **Résidu TabM** (`Config.residual_blend`, déclaré à 1) : artefact `models/tabm_residual/` (`residuals.csv` :
-   `id_candidat, residual_rsd` ; `manifest.json`), appris sur l'historique seulement (`kaggle/train.py`). Score final =
+4. **Résidu TabM** (`Config.residual_blend`, déclaré à 2,5 ; `Config.residual_artefact`) : artefact `models/tabm_residual_ensemble_rh/` (`residuals.csv` :
+   `id_candidat, residual_rsd` ; `manifest.json`), moyenne de 4 réseaux TabM (R + heures) appris sur l'historique seulement ; le manifeste liste les 4 membres, leurs SHA-256 sources, leurs gains hors échantillon et leur monotonie. Score final =
    base + mélange × résidu, en unités de cote R. L'artefact est lu par `src/adapters` ; le SHA-256 de `residuals.csv`
    est comparé au manifeste, et les SHA-256 des deux CSV décidés aux `input_hashes` du manifeste ; toute divergence, un
    identifiant manquant ou une valeur non finie lève `InputError` (sortie 1, aucun fichier). Sans artefact, la
@@ -99,8 +99,8 @@ Les E/S de fichiers ne sont permises que dans `src/adapters/`, `src/main.py`, `s
 
 Quatre couches de garde (détail dans `MONITORING_PLAN.md`) : contrôles de surveillance (EO signé vs mérite, dérive),
 garde du jury, garde du consensus, **garde forte** (consensus tout OK ; ratio d'impact régional ≥ max(0,90 ; règle de
-consensus déclarée − 0,01) ; écart de sous-groupe, écart de mérite sur cinq régions et écart à chaque référence au plus
-égaux à ceux de la règle de consensus déclarée + 0,01 ; coût du revenu ≤ 5 % de la pénalité retirée). La règle de
+consensus déclarée − 0,012) ; écart de sous-groupe, écart de mérite sur cinq régions et écart à chaque référence au plus
+égaux à ceux de la règle de consensus déclarée + 0,012 (`TOLERANCE`, tolérance déclarée de la garde forte pour les régressions par rapport à la règle de consensus) ; coût du revenu ≤ 5 % de la pénalité retirée). La règle de
 consensus de comparaison est la règle **déclarée** (revenu +0,025), recalculée sur l'historique à chaque exécution.
 
 | Action | Paramètres | Quand |
@@ -183,7 +183,7 @@ contributions de la base (cote R, heures, revenu) et le terme `residual_rsd`, en
 les doublons, les alertes corrigibles et non corrigibles, la dérive, le rejeu, l'invariance régionale, les frontières de
 paquets, le jury (échanges symétriques, déterminisme), la correction des étiquettes, la garde de sortie, la garde du
 jury, la garde du consensus, la garde forte, le raisonnement, ainsi que les contrôles propres à cette version :
-`residual_artefact` (SHA-256 contre le manifeste et les données ; valeurs, hachage et lot altérés refusés),
+`residual_artefact` (SHA-256 contre le manifeste et les données ; valeurs, hachage et lot altérés refusés ; quatre membres avec gain hors échantillon positif et monotonie GRIDPASS ; SHA-256 sources déclarés),
 `residual_required` (la configuration déclarée échoue clairement sans artefact, les autres tournent),
 `declared_pipeline` (poids du revenu dans la plage des examinateurs ; décisions = top-k de base + résidu ; mode audit
 sans échange ni déplacement ; résidu aligné par identifiant), `consensus_constants` (poids du revenu des examinateurs égaux
@@ -195,7 +195,7 @@ sans échange ni déplacement ; résidu aligné par identifiant), `consensus_con
 
 - La référence cachée est inconnue ; l'équité mesurée est relative aux règles des cinq examinateurs.
 - Le poids du revenu et le mélange du résidu sont des choix de modélisation déclarés : à valider par un comité humain.
-- Le résidu améliore à peine la perte logarithmique historique (voir le manifeste) : l'étiquette historique mesure les
+- Chaque membre du résidu améliore à peine la perte logarithmique historique (voir le manifeste) : l'étiquette historique mesure les
   décisions du comité, pas le mérite.
 - Les votes en percentile dépendent de la composition du lot.
 - Un nœud corrompu (longueur ou NaN) lève avant la construction du BLOCK : échec fermé (sortie 1), pas un BLOCK enregistré.

@@ -17,7 +17,7 @@ _EXPORTS = {
     "jurors": ("MODEL_JURORS",),
     "label_correction": ("CommitteeModel", "LabelCorrection", "correct_labels", "CorrectionReport",
                          "correction_report", "report_warnings", "NO_PENALTY_WARNING"),
-    "models": ("Config", "DECLARED_CONFIG", "DECLARED_RESIDUAL_BLEND", "VALIDATOR_JURY_CONFIG",
+    "models": ("Config", "DECLARED_CONFIG", "DECLARED_RESIDUAL_BLEND", "SINGLE_RESIDUAL_BLEND", "SINGLE_RESIDUAL_CONFIG", "VALIDATOR_JURY_CONFIG",
                "INCOME_BLIND_CONFIG", "INCOME_BLIND_NO_JURY_CONFIG", "MODEL_JURY", "MODEL_JURY_CONFIG",
                "CONSENSUS_PANEL_CONFIG", "AUDIT_PANEL_CONFIG", "CONFIGS", "OFFSET_BOUND", "FairPipeline",
                "reference_labels"),

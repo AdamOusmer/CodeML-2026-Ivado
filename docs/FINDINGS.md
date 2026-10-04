@@ -29,7 +29,7 @@ proche du rapport heures/R de l'ajustement du comité (0,1835, recalculé à cha
 
 Le revenu est le seul désaccord : mérite, juridique, régional 0 ; besoin −0,05 ; processus de données +0,19. Les données
 seules ne le tranchent pas. Le poids retenu, **+0,025 en unités de cote R** (dans la plage de désaccord des examinateurs, 0 à +0,19), le poids des
-heures ci-dessus et le mélange du résidu, **1**, sont des **choix de modélisation déclarés, retenus par essais**. Ils
+heures ci-dessus et le mélange du résidu, **2,5**, sont des **choix de modélisation déclarés, retenus par essais**. Ils
 sont définis chacun en un seul endroit de `src/policy`.
 
 ## 3. Correction
@@ -37,11 +37,13 @@ sont définis chacun en un seul endroit de `src/policy`.
 1. **Diagnostic** : le modèle du comité reste ajusté pour estimer la pénalité et le rapport heures/R ; il n'est pas la cible.
 2. **Base** : règle de consensus `z(R) + 0,185 × z(heures) + 0,025 × z(log revenu)` en unités de cote R ; les étiquettes
    d'entraînement sont les k meilleurs sur l'historique (k = round(part × n), part = 39,94 % lue dans les données).
-3. **Résidu TabM** : un TabM borné (entrées : cote R et heures seulement) est appris sur l'historique hors machine
-   (`kaggle/train.py`, 5 plis × 3 graines, pénalité choisie par la perte logarithmique hors échantillon) et livré comme
-   artefact `models/tabm_residual/`, vérifié par SHA-256 (manifeste et données décidées). Score = base + 1 × résidu.
-   La perte logarithmique historique hors échantillon passe de 0,25884 (modèle linéaire figé) à 0,25869 : un gain
-   minime mais de bon sens ; la grille de monotonie en R et en heures est respectée (`manifest.json`).
+3. **Résidu TabM (ensemble de 4 réseaux)** : quatre TabM bornés (entrées : cote R et heures seulement ; 16×2×128 et
+   32×3×256, plafond 0,25 et 0,5) sont appris sur l'historique hors machine (5 plis × 5 graines, pénalité de chaque
+   réseau choisie par la perte logarithmique hors échantillon) ; le résidu est la moyenne de leurs résidus par
+   candidat, livrée comme artefact `models/tabm_residual_ensemble_rh/`, vérifié par SHA-256 (manifeste, sources et
+   données décidées). Score = base + 2,5 × résidu (mélange déclaré, retenu par essais). Chaque réseau améliore
+   légèrement la perte logarithmique historique hors échantillon (de 0,00015 à 0,00030) : un gain minime ; la grille de
+   monotonie en R et en heures est respectée pour les quatre (`manifest.json`).
 4. **Les k meilleurs** reçoivent la bourse.
 5. **Jury et raisonnement en mode audit** : le panel des cinq règles de référence vote sur les cas limites et le
    raisonnement trace chaque candidat examiné ; votes, traces et contradictions sont enregistrés, **aucun échange ni
@@ -84,6 +86,11 @@ donc la base en mode audit) : écart EO moyen contre les cinq références 0,017
 | « Plan équitable » (`fair_plane`, projection sur le noyau) | retire surtout les heures (u : R −0,144, revenu −0,465, heures +0,874) ; accord avec les étiquettes 0,997 → 0,974 |
 | Harnais par étapes (`stepwise`) et veto à double jury | écartés pour la complexité qu'ils ajoutent ; leur code et leurs contrôles sont retirés de cette version |
 | Ancien jury validateur | 35 échanges : écart EO de 0,002 à 0,016 (désormais bloqué par la garde du consensus) |
+| Jury actif (échanges appliqués) | 26 échanges proposés ; effet sur l'équité +0,018 > 0,01 : `REVERT_JURY` par le harnais |
+| Jurés sensibles au résidu | 16 échanges ; effet sur l'équité +0,019 : annulé |
+| Jury de 8 modèles TabM (quorum 6/8) | 1 échange ; garde forte en ALERT (pire écart de référence 0,0138 > 0,012) : bloqué |
+| Barrière d'équité par paire | 1 échange conservé sur 26 (2 lignes) |
+| Conclusion | le jury et le raisonnement restent en mode audit (votes et traces pour la transparence) ; les décisions viennent du modèle entraîné, sous les garde-fous |
 | Seuil d'heures à 10 h | non identifié (retenu dans 48 % des rééchantillonnages) ; remplacé par un crédit linéaire |
 | Normalisation du revenu par région | supprime le signal régional (AUC 0,693 → 0,502) mais le revenu n'est pas un critère de la référence : retiré de la cible plutôt que normalisé |
 

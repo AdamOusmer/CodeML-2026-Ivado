@@ -1204,7 +1204,7 @@ def check_config_option(ctx) -> str:
     from src.harness import decide
     from src.policy import (AUDIT_PANEL_CONFIG, CONFIGS, CONSENSUS_PANEL_CONFIG, DECLARED_CONFIG, INCOME_BLIND_CONFIG,
                             INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, SCORING_FEATURES,
-                            VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
+                            SINGLE_RESIDUAL_CONFIG, VALIDATOR_JURY_CONFIG, FairPipeline, budget_share, scoring_features)
 
     history, batch = ctx["history"], ctx["batch"]
     assert DECLARED_CONFIG.residual_blend is not None and DECLARED_CONFIG.features == SCORING_FEATURES, "declared config"
@@ -1212,7 +1212,7 @@ def check_config_option(ctx) -> str:
     assert INCOME_BLIND_CONFIG.features == ["cote_r", "heures_travail"], f"features {INCOME_BLIND_CONFIG.features}"
     assert {c.name: c for c in (VALIDATOR_JURY_CONFIG, INCOME_BLIND_CONFIG,
                               INCOME_BLIND_NO_JURY_CONFIG, MODEL_JURY_CONFIG, CONSENSUS_PANEL_CONFIG,
-                              AUDIT_PANEL_CONFIG, DECLARED_CONFIG)} == CONFIGS, "CONFIGS registry"
+                              AUDIT_PANEL_CONFIG, SINGLE_RESIDUAL_CONFIG, DECLARED_CONFIG)} == CONFIGS, "CONFIGS registry"
     declared = ctx["baseline"]
     share = budget_share(history)
     for config in (INCOME_BLIND_CONFIG,):
@@ -1872,7 +1872,7 @@ def check_reasoning_gate(ctx) -> str:
 
 
 
-RESIDUAL_DIR = ROOT / "models/tabm_residual"
+RESIDUAL_DIR = ROOT / "models/tabm_residual_ensemble_rh"
 FORBIDDEN_WORDS = ("leader" + "board", "hx" + "buddy", "sub" + "mission", "batch" + "1", "pro" + "be", "son" + "de",
                    "reward" + " model", "SCO" + "RED")
 FORBIDDEN_NUMBERS = tuple(re.escape(value) for value in ("94" + ".7", "95" + ".0", "95" + ".1", "95" + ".2"))
@@ -1902,8 +1902,15 @@ def check_residual_artefact(ctx) -> str:
     manifest = json.loads((RESIDUAL_DIR / "manifest.json").read_text())
     residual = read_residual(RESIDUAL_DIR, HISTORY_PATH, BATCH_PATH, batch_ids)
     assert len(residual) == 4000 and np.isfinite(residual).all(), "residual shape"
-    assert manifest["oof_logloss_delta"] < 0, f"residual does not improve OOF log loss: {manifest['oof_logloss_delta']}"
+    members = manifest["members"]
+    assert len(members) == 4 and all(m["oof_logloss_improvement"] > 0 for m in members), "member OOF improvements"
+    assert all(m["monotonicity"]["grid_status"] == "GRIDPASS" for m in members), "member monotonicity"
     assert manifest["monotonicity"]["grid_status"] == "GRIDPASS", manifest["monotonicity"]
+    assert set(manifest["source_hashes"]) == {m["cfg_id"] for m in members}, "source hashes"
+    assert all(manifest["source_hashes"][m["cfg_id"]] == m["source_sha256"] for m in members), "member source hash"
+    sources = list(manifest["source_hashes"].values())
+    assert len(set(sources)) == 4 and all(re.fullmatch("[0-9a-f]{64}", value) for value in sources), "source hash format"
+    assert manifest["aggregation"].startswith("id-aligned arithmetic mean"), manifest["aggregation"]
     tampered = residual_copy(ctx, "residual_values")
     path = tampered / "residuals.csv"
     path.write_text(path.read_text().replace(",", ",9", 1))
@@ -1918,7 +1925,8 @@ def check_residual_artefact(ctx) -> str:
     rejected(lambda: read_residual(RESIDUAL_DIR, HISTORY_PATH, other_batch, batch_ids), "other_batch.csv")
     rejected(lambda: read_residual(ctx["tmp"] / "absent", HISTORY_PATH, BATCH_PATH, batch_ids), "incomplete")
     return (f"hashes match the manifest and both data files; tampered values, history hash, batch file and missing "
-            f"directory rejected; OOF log loss delta {manifest['oof_logloss_delta']:+.5f}")
+            f"directory rejected; four members, each with OOF log loss gain and GRIDPASS; mean gain "
+            f"{manifest['oof_logloss_improvement_mean_of_members']:+.5f}")
 
 
 def check_residual_required(ctx) -> str:
@@ -1938,7 +1946,8 @@ def check_declared_pipeline(ctx) -> str:
 
     low, high = min(REVIEWER_INCOME_WEIGHTS.values()), max(REVIEWER_INCOME_WEIGHTS.values())
     assert low <= DECLARED_INCOME_WEIGHT <= high, f"declared income weight {DECLARED_INCOME_WEIGHT} outside [{low}, {high}]"
-    assert DECLARED_CONFIG.residual_blend == DECLARED_RESIDUAL_BLEND == 1.0, "blend knob"
+    assert DECLARED_CONFIG.residual_blend == DECLARED_RESIDUAL_BLEND == 2.5, "blend knob"
+    assert DECLARED_CONFIG.residual_artefact == "tabm_residual_ensemble_rh", "declared artefact"
     assert DECLARED_CONFIG.jury.audit_only and DECLARED_CONFIG.reasoning and not DECLARED_CONFIG.reasoning.apply_moves
     record = declared_record(ctx)
     batch = ctx["batch"]

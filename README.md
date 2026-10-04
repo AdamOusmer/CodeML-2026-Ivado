@@ -80,6 +80,7 @@ Entraînement du résidu (GPU Kaggle gratuit) : `uv run python kaggle/build_note
 
 ### Documentation
 
+- [docs/PIPELINE.md](docs/PIPELINE.md)
 - [docs/HARNESS_SPEC.md](docs/HARNESS_SPEC.md)
 - [docs/JURY_SPEC.md](docs/JURY_SPEC.md)
 - [docs/CONSENSUS_TARGET_SPEC.md](docs/CONSENSUS_TARGET_SPEC.md)

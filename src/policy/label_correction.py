@@ -33,6 +33,10 @@ class CommitteeModel:
         base = Z @ (self.lr_.coef_[0][:-1] * kept) + self.lr_.intercept_[0]
         return base + (1.0 - removal) * self.remote_penalty_ * is_remote(df)
 
+    def penalty_in_rule_units(self):
+        r_coefficient = dict(zip(COMMITTEE_FEATURES, self.lr_.coef_[0][:-1]))["cote_r"]
+        return float(self.remote_penalty_ / r_coefficient)
+
     def hours_over_r(self):
         coefficients = dict(zip(COMMITTEE_FEATURES, np.abs(self.lr_.coef_[0][:-1])))
         return float(coefficients["heures_travail"] / coefficients["cote_r"])

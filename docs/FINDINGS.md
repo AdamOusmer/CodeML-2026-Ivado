@@ -14,13 +14,22 @@ chaîne est construite à partir de l'historique : aucune valeur n'est réglée 
   heures travaillées 0,805, revenu 0,69, cote R 0,56 (AUC). Retirer la colonne région ne suffit donc pas.
 - **Le revenu est une pénalité cachée.** Le revenu (log) des candidats éloignés est inférieur de 0,68 écart-type.
   Dans le comité, la récompense du revenu coûte en moyenne −0,54 logit aux candidats éloignés, soit **29 %** de la
-  pénalité explicite. Les heures travaillées les aident (+0,80 logit, 42 % de la pénalité).
+  pénalité explicite. Les chemins légitimes se compensent presque : les heures travaillées les aident (+0,80 logit),
+  la cote R plus basse leur coûte −0,90 logit (net −0,10).
+- **Reconstitution du générateur.** Deux groupes seulement (terme régional par région, référence Montréal :
+  Capitale-Nationale −0,03 ; Bas-Saint-Laurent −1,91 ; Côte-Nord −1,92 ; Gaspésie −1,81) ; critères indépendants à
+  l'intérieur de chaque groupe (corrélation maximale 0,014 au centre, 0,030 en région) ; comité linéaire (mêmes pentes,
+  p = 0,82 ; aucun modèle plus riche ne bat la régression logistique, section 5).
 
 ## 2. Définition de l'équité retenue
 
 Égalité des chances (« equal opportunity ») : à mérite égal, même probabilité d'obtenir la bourse, quelle que soit la
 région. Ce n'est pas la parité des taux : la cote R des candidats éloignés est plus basse de 0,66 point, ce qui justifie
-légitimement environ 7 points d'écart de taux (R seul : centre 42,8 % / éloigné 35,8 %).
+légitimement environ 7 points d'écart de taux (R seul : centre 42,8 % / éloigné 35,8 %). Forcer la parité refuserait des
+candidats plus méritants pour égaliser des taux (quotas et parité forcée sont des drapeaux rouges pour quatre
+examinateurs sur cinq) ; le tort constaté est une pénalité **à mérite égal**, ce que mesure l'égalité des chances, qui
+est aussi la métrique de la grille. La parité, le ratio d'impact par région et les écarts intersectionnels restent
+surveillés comme indicateurs secondaires (détection d'une sur-correction).
 
 Le « mérite » est défini par **consensus** de cinq examinateurs indépendants (mérite, besoin, juridique, processus de
 données, équité régionale ; `docs/reviews/CONSENSUS.md`). Les **signes de légitimité sont déclarés par des humains**
@@ -53,28 +62,46 @@ sont définis chacun en un seul endroit de `src/policy`.
 
 ## 4. Résultats (4 000 candidats)
 
-Publié, 1 598 octrois (39,95 %), décalage 0. Jury en mode audit : 200 cas examinés, 14 échanges contestés, 0 appliqué ;
-raisonnement : 5 déplacements proposés, 44 contradictions conservées, 0 appliqué.
+Publié, 1 598 octrois (39,95 %), décalage 0. Jury en mode audit : 200 cas examinés, 26 échanges contestés, 0 appliqué ;
+raisonnement : 6 déplacements proposés, 49 contradictions conservées, 0 appliqué.
 
 | Indicateur | Comité (historique) | Maintenant |
 |---|---|---|
-| Taux centre / éloigné | 48,4 % / 27,3 % | **40,2 % / 39,6 %** |
-| Écart de parité | 0,21 | 0,006 |
-| Écart EO signé vs mérite (centre − éloigné) | n.d. | −0,065 (OK : plage −0,09 à +0,05) |
-| Écart d'opportunité vs règle de consensus | n.d. | 0,001 |
-| Ratio d'impact plus basse/plus haute région | n.d. | 0,916 (Bas-Saint-Laurent 37,9 % ; Gaspésie 41,4 %) |
-| Accord moyen / minimal avec les cinq règles | n.d. | 0,980 / 0,946 (processus de données) |
-| Pire écart de sous-groupe (programme, première génération) | n.d. | 0,039 |
-| Garde forte | n.d. | OK (ratio d'impact 0,916 ≥ plancher ; coût du revenu 3,6 % de la pénalité retirée, plafond 5 %) |
+| Taux centre / éloigné | 48,4 % / 27,3 % | **40,1 % / 39,7 %** |
+| Écart de parité | 0,21 | 0,005 |
+| Écart EO signé vs mérite (centre − éloigné) | 0,202 (forêt de production au budget) | −0,060 (OK : plage −0,09 à +0,05) |
+| Écart d'opportunité vs règle de consensus | n.d. | 0,002 |
+| Ratio d'impact plus basse/plus haute région | n.d. | 0,924 (Bas-Saint-Laurent 38,1 % ; Gaspésie 41,2 %) |
+| Écart EO moyen / accord moyen avec les cinq règles | 0,267 / 0,904 (forêt de production) | 0,019 / 0,976 (minimum 0,944, processus de données) |
+| Pire écart de sous-groupe (programme, première génération) | n.d. | 0,030 |
+| Garde forte | n.d. | OK (ratio d'impact 0,924 ≥ plancher ; coût du revenu 3,6 % de la pénalité retirée, plafond 5 %) |
 
-Lecture de l'EO signé : −0,065 signifie que les candidats éloignés méritants (R seul) sont un peu **plus** servis que
+Lecture de l'EO signé : −0,060 signifie que les candidats éloignés méritants (R seul) sont un peu **plus** servis que
 ceux du centre, effet voulu du crédit d'heures ; la limite de dépassement est 0,09.
-Avertissements (WARN) : écart vs comité corrigé 0,046 (attendu : cette référence garde la récompense du revenu, que
-quatre examinateurs sur cinq rejettent) ; part des cas examinés où les jurés se divisent : 0,78 (WARN au-delà de 0,5).
+Avertissements (WARN) : écart vs comité corrigé 0,053 (attendu : cette référence garde la récompense du revenu, que
+quatre examinateurs sur cinq rejettent) ; part des cas examinés où les jurés se divisent : 0,74 (WARN au-delà de 0,5).
 
-Front de Pareto (10 partitions 70/30 de l'historique ; le résidu n'existe que pour les candidats, le point « déclaré » est
-donc la base en mode audit) : écart EO moyen contre les cinq références 0,017 et accord moyen 0,983, contre 0,064 et
-0,948 pour le comité sans pénalité (jury de validation : 0,073 et 0,952) ; la base déclarée est sur le front.
+**Front de Pareto de la chaîne déclarée** (`model_corrige.py` → `pareto_front.png`, `resultats_pareto_declare.csv`).
+Contrainte d'équité balayée : la part λ de la pénalité régionale du comité retirée du score déclaré (score = base +
+2,5 × résidu + (1 − λ) × pénalité × éloigné, pénalité convertie en unités de cote R), 11 réglages de 0 à 100 % ; puis,
+à λ = 100 %, le mélange du résidu (0 à 5) et le poids du revenu (−0,05 à +0,19). Même budget pour chaque point.
+
+| Réglage | Écart EO moyen vs 5 références | Accord moyen | EO signé vs mérite | Parité |
+|---|---|---|---|---|
+| Forêt de production au budget | 0,267 | 0,904 | +0,202 | 0,192 |
+| λ = 0 % (pénalité du comité conservée) | 0,223 | 0,925 | +0,143 | 0,159 |
+| λ = 50 % | 0,112 | 0,955 | +0,034 | 0,085 |
+| **λ = 100 % (déclaré)** | **0,019** | **0,976** | **−0,060** | **0,005** |
+| mélange 0 / 0,5 (λ = 100 %) | 0,013 / 0,012 | 0,980 / 0,980 | −0,072 / −0,066 | 0,005 / 0,007 |
+| revenu +0,19 (λ = 100 %) | 0,056 | 0,949 | −0,008 | 0,047 |
+
+La contrainte d'équité domine le front : chaque pas de λ réduit l'écart EO et augmente l'accord, sans arbitrage contre
+ces références. Le mélange et le revenu ne déplacent le point que d'environ ±0,01 près du bout. Le mélange 2,5 n'est pas
+sur le front calculé contre ces références linéaires (écart d'environ 0,007 en EO et 0,005 en accord avec le mélange
+0,5) : il est justifié par la perte logarithmique hors échantillon sur l'historique, pas par ce graphique. Le point
+déclaré du graphique est identique, décision par décision, à `predictions.csv`. Sur 10 partitions 70/30 de l'historique
+(`pareto_comparaison.png`), le même balayage de λ sur la base donne 0,261 → 0,018 en écart EO moyen et 0,915 → 0,982 en
+accord ; la base déclarée domine ExpGrad (0,159 à 0,196), ThresholdOptimizer (0,171) et le retrait des proxys (0,142).
 
 ## 5. Expériences rejetées
 
@@ -85,6 +112,7 @@ donc la base en mode audit) : écart EO moyen contre les cinq références 0,017
 | Axes « mérite » / « effort » (`merit_effort_axes`) | reparamétrage d'une même régression (coefficients implicites 9,504 / 1,382 contre 9,506 / 1,382 ; Δp max 5e−4) |
 | « Plan équitable » (`fair_plane`, projection sur le noyau) | retire surtout les heures (u : R −0,144, revenu −0,465, heures +0,874) ; accord avec les étiquettes 0,997 → 0,974 |
 | Harnais par étapes (`stepwise`) et veto à double jury | écartés pour la complexité qu'ils ajoutent ; leur code et leurs contrôles sont retirés de cette version |
+| Optimiseur robuste de l'écart attendu (expérience hors du code publié) | score attendu sur 35 contre les références des examinateurs : 32,10 en échantillon mais 29,11 en validation « une référence laissée de côté », sous la règle de consensus (29,54) ; gagne 1 pli sur 4 : surajustement |
 | Ancien jury validateur | 35 échanges : écart EO de 0,002 à 0,016 (désormais bloqué par la garde du consensus) |
 | Jury actif (échanges appliqués) | 26 échanges proposés ; effet sur l'équité +0,018 > 0,01 : `REVERT_JURY` par le harnais |
 | Jurés sensibles au résidu | 16 échanges ; effet sur l'équité +0,019 : annulé |
@@ -98,10 +126,10 @@ donc la base en mode audit) : écart EO moyen contre les cinq références 0,017
 
 - **Référence cachée inconnue.** Les « méritants » sont des hypothèses issues des examens ; l'accord moyen avec les cinq
   règles est un substitut, non une mesure. Si la référence est celle du processus de données (revenu +0,19), le
-  consensus ne s'accorde avec elle qu'à environ 95 %.
-- **Désaccord sur le revenu.** Les données seules ne fixent pas ce poids : +0,025 et le mélange 1 sont des choix de
+  consensus ne s'accorde avec elle qu'à 94 %.
+- **Désaccord sur le revenu.** Les données seules ne fixent pas ce poids : +0,025 et le mélange 2,5 sont des choix de
   modélisation déclarés, à faire valider par un comité humain. Coût en équité mesuré sur les données : revenu = 3,6 % de la
-  pénalité retirée, garde du consensus OK, ratio d'impact régional 0,916.
+  pénalité retirée, garde du consensus OK, ratio d'impact régional 0,924.
 - **Résidu TabM.** Le gain de perte logarithmique est minime et l'étiquette historique mesure les décisions du comité, pas le
   mérite. La monotonie n'est vérifiée que sur une grille numérique, pas globalement.
 - Mesure en partie circulaire pour le point déclaré : l'accord avec le consensus optimise la cible qui sert à le mesurer ;

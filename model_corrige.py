@@ -30,6 +30,13 @@ def main():
     pd.set_option("display.width", 250)
     print(artifacts["pareto"].table.round(3).to_string(index=False))
 
+    sweep = artifacts["declared_sweep"]
+    columns = ["method", "family", "setting", "rate_centre", "rate_remote", "eo_gap_reviewers_mean",
+               "agree_reviewers_mean", "g_merit", "eo_gap_corrected", "dp_gap", "pareto"]
+    print("\nFront de Pareto de la chaîne déclarée (4 000 candidats, pareto_front.png) :")
+    print(sweep.summary[columns].round(4).to_string(index=False))
+    print(f"Point déclaré identique aux décisions publiées : {sweep.matches_published}")
+
     record = artifacts["record"]
     remote = is_remote(artifacts["inputs"].batch)
     print(f"\nHarness: {record.status}, actions {[action.kind.value for action in record.actions]}, offset {record.offset:+.3f}")
